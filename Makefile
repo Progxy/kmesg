@@ -6,3 +6,5 @@ install: compile
 
 compile: kmesg.c
 	gcc -std=c11 -Wall -Wextra -pedantic kmesg.c -o kmesg
+clean: kmesg
+	rm -rf kmesg

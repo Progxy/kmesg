@@ -18,16 +18,16 @@ typedef enum LogLevels {
 } LogLevels;
 
 // Define color codes for each log level
-#define RESET_COLOR "\033[0m"
-#define EMERGENCY_COLOR "\033[91m"      // Bright Red
-#define ALERT_COLOR "\033[1;31m"        // Bold Red
-#define CRITICAL_COLOR "\033[38;5;214m" // Orange (256-color code)
-#define ERROR_COLOR "\033[31m"          // Red
-#define WARNING_COLOR "\033[33m"        // Yellow
-#define NOTICE_COLOR "\033[94m"         // Light Blue
-#define INFO_COLOR "\033[97m"           // White
-#define DEBUG_COLOR "\033[90m"          // Dim Gray
-#define TIMESTAMP_COLOR "\033[36m"      // Cyan
+#define RESET_COLOR       "\033[0m"           // Reset to default color
+#define EMERGENCY_COLOR   "\033[38;5;196m"    // Bright red for immediate emergencies
+#define ALERT_COLOR       "\033[38;5;208m"    // Bold orange for high alert
+#define CRITICAL_COLOR    "\033[38;5;160m"    // Deep red for critical issues
+#define ERROR_COLOR       "\033[38;5;197m"    // Brighter red for standard errors
+#define WARNING_COLOR     "\033[38;5;214m"    // Yellow-orange for warnings
+#define NOTICE_COLOR      "\033[38;5;33m"     // Blue for notices
+#define INFO_COLOR        "\033[38;5;37m"     // Green for informational messages
+#define DEBUG_COLOR       "\033[38;5;243m"    // Grey for debug messages
+#define TIMESTAMP_COLOR   "\033[38;5;39m"     // Cyan for timestamps
 
 const char* log_level_colors[] = {
     EMERGENCY_COLOR,  // LOG_EMERG
@@ -41,24 +41,24 @@ const char* log_level_colors[] = {
 };
 
 // Kernel function types
-#define READ 2
-#define READ_ALL 3
-#define READ_CLEAR 4
-#define CLEAR 5
-#define CONSOLE_OFF 6
-#define CONSOLE_ON 7
+#define READ          2
+#define READ_ALL      3
+#define READ_CLEAR    4
+#define CLEAR         5
+#define CONSOLE_OFF   6
+#define CONSOLE_ON    7
 #define CONSOLE_LEVEL 8
-#define SIZE_UNREAD 9
-#define SIZE_BUFFER 10
+#define SIZE_UNREAD   9
+#define SIZE_BUFFER   10
 
 // KMESG function type
-#define COLOR_DEMO 11
-#define READ_UNREAD 12
-#define HELPER 13
-#define SET_MIN_SEVERITY 14
-#define SET_MIN_FACILITY 15
-#define LIST_LEVELS 16
-#define INVALID_FLAG 17
+#define COLOR_DEMO           11
+#define READ_UNREAD          12
+#define HELPER               13
+#define SET_MIN_SEVERITY     14
+#define SET_MIN_FACILITY     15
+#define LIST_LEVELS          16
+#define INVALID_FLAG         17
 #define DEFAULT_MSG_BUF_SIZE 8192
 
 const char* mod_func_names[] = {"", "", "READ", "READ_ALL" , "READ_CLEAR", "CLEAR", "CONSOLE_OFF", "CONSOLE_ON", "CONSOLE_LEVEL", "SIZE_UNREAD", "SIZE_UNREAD", "SIZE_BUFFER"};
@@ -272,21 +272,21 @@ void print_list_levels(void) {
 void print_helper(void) {
 	printf("Usage: kmesg [-flag[=val]].\n");
 	printf("Those are the flags available:\n");
-	printf("\t-C: Clear the kernel ring buffer\n");
-	printf("\t-R: Await until the kernel log buffer is nonempty, and then read at most 'len' bytes, where 'len' is the value passed after the flag, otherwise the default value '%u'.\n", DEFAULT_MSG_BUF_SIZE);
-	printf("\t-u: Return the number of bytes currently available to be read from the kernel log buffer.\n");
-	printf("\t-d: Print the color demo, to show the color palette used for each log level.\n");
+	printf("\t-C:  Clear the kernel ring buffer\n");
+	printf("\t-R:  Await until the kernel log buffer is nonempty, and then read at most 'len' bytes, where 'len' is the value passed after the flag, otherwise the default value '%u'.\n", DEFAULT_MSG_BUF_SIZE);
+	printf("\t-u:  Return the number of bytes currently available to be read from the kernel log buffer.\n");
+	printf("\t-d:  Print the color demo, to show the color palette used for each log level.\n");
 	printf("\t-ra: This is the default behaviour used by KMESG. Read all messages remaining in the ring buffer. If a value is passed after the flag, reads the last 'val' bytes from the log buffer.\n");
 	printf("\t-rc: Read and clear all messages remaining in the ring buffer. If a value is passed after the flag, reads the last 'val' bytes from the log buffer.\n");
 	printf("\t-ru: Read the messages that have not been read. It is similar to executing -r with -u returned bytes len.\n");
 	printf("\t-ce: Set the console log level to the default, so that messages are printed to the console.\n");
 	printf("\t-cd: Set the console log level to the minimum, so that no messages are printed to the console.\n");
-	printf("\t-L: Set the console log level to the value passed after the flag, which must be an integer between 1 and 8 (inclusive).\n");
-	printf("\t-s: Set the MIN_SEVERITY using the value passed after the flag. The default value is '%s'.\n", severities_names[min_severity]);
-	printf("\t-f: Set the MIN_FACILITY using the value passed after the flag. The default value is '%s'.\n", facilities_names[min_facility]);
-	printf("\t-l: List SEVERITY levels and FACILITY levels.\n");
-	printf("\t-h: show this page.\n");
-	printf("\n" EMERGENCY_COLOR "KMESG: " DEBUG_COLOR "A colored alternative to dmesg, by" TIMESTAMP_COLOR " \'TheProgxy\'." RESET_COLOR"\n");
+	printf("\t-L:  Set the console log level to the value passed after the flag, which must be an integer between 1 and 8 (inclusive).\n");
+	printf("\t-s:  Set the MIN_SEVERITY using the value passed after the flag. The default value is '%s'.\n", severities_names[min_severity]);
+	printf("\t-f:  Set the MIN_FACILITY using the value passed after the flag. The default value is '%s'.\n", facilities_names[min_facility]);
+	printf("\t-l:  List SEVERITY levels and FACILITY levels.\n");
+	printf("\t-h:  Show this page.\n");
+	printf("\n" EMERGENCY_COLOR "KMESG: " DEBUG_COLOR "A colored alternative to" WARNING_COLOR " dmesg" DEBUG_COLOR ", by" TIMESTAMP_COLOR " \'TheProgxy\'." RESET_COLOR"\n");
 	return; 
 }
 
