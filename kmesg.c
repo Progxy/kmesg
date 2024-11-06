@@ -40,6 +40,8 @@ const char* log_level_colors[] = {
     DEBUG_COLOR       // LOG_DEBUG
 };
 
+#define ERR_KMSG(...) printf(ERROR_COLOR "KMESG_ERROR" RESET_COLOR "(line:" __LINE__"):" __VA_ARGS__)
+
 // Kernel function types
 #define READ          2
 #define READ_ALL      3
@@ -119,7 +121,7 @@ int str_to_int(char* str) {
 	unsigned int i = 0;
 	while (str[i] != '\0') {
 		if (!IS_A_VAL(str[i])) {
-			printf(ERROR_COLOR "KMESG_ERROR:" RESET_COLOR " this is not a valid value: " CRITICAL_COLOR "'%s'" RESET_COLOR ".\n", str);
+			ERR_KMSG(" this is not a valid value: " CRITICAL_COLOR "'%s'" RESET_COLOR ".\n", str);
 			return -1;
 		}
 		value *= 10;
@@ -133,19 +135,19 @@ char** extract_lines(char* str, unsigned int len, unsigned int* lines_cnt) {
 	unsigned int ref_cnt = ref_chr_cnt(str, len, '\n');
 	char** lines = (char**) calloc(ref_cnt, sizeof(char*));
 	if (lines == NULL) {
-		printf("failed to allocate lines buff.\n");
+		ERR_KMSG("failed to allocate lines buff.\n");
 		return NULL;
 	}
 
 	unsigned int str_pos = 0;
 	for (*lines_cnt = 0; *lines_cnt < ref_cnt; ++(*lines_cnt)) {
 		long long int ref_pos = find_chr(str + str_pos, len - str_pos, '\n');
-		if (ref_pos < 0) printf("ERROR: ref not found, str_pos: %u, line_cnt: %u.\n", str_pos, *lines_cnt + 1);
+		if (ref_pos < 0) ERR_KMSG("ref not found, str_pos: %u, line_cnt: %u.\n", str_pos, *lines_cnt + 1);
 		lines[*lines_cnt] = (char*) calloc(ref_pos + 1, sizeof(char));
 		if (lines[*lines_cnt] == NULL) {
 			for (unsigned int i = 0; i < *lines_cnt - 1; ++i) free(lines[*lines_cnt]);
 			free(lines);
-			printf("failed to allocate %u line.\n", *lines_cnt + 1);
+			ERR_KMSG("failed to allocate %u line.\n", *lines_cnt + 1);
 			return NULL;
 		}
 		mem_cpy(lines[*lines_cnt], str + str_pos, ref_pos);
@@ -164,13 +166,13 @@ void print_line(char* str_line) {
 	// Extract the log level is composed by severity and facility (combined value = (facility x 8) + severity), in this way we can filter messages by facility and severity
 	long long int log_level_end_pos = find_chr(str_line + str_pos, len - str_pos, '>');
 	if (log_level_end_pos < 0) {
-		printf("error: invalid string format: '%s'.\n", str_line);
+		ERR_KMSG("invalid string format: '%s'.\n", str_line);
 		return;
 	}
 	
 	char* log_level_str = (char*) calloc(log_level_end_pos + 1, sizeof(char));
 	if (log_level_str == NULL) {
-		printf("failed to allocate the log level buf.\n");
+		ERR_KMSG("failed to allocate the log level buf.\n");
 		return;
 	}
 	mem_cpy(log_level_str, str_line + str_pos, log_level_end_pos);
@@ -189,13 +191,13 @@ void print_line(char* str_line) {
 	// Extract the timestamp
 	long long int timestamp_end_pos = find_chr(str_line + str_pos, len - str_pos, ']');
 	if (timestamp_end_pos < 0) {
-		printf("error: invalid string format: '%s'.\n", str_line);
+		ERR_KMSG("invalid string format: '%s'.\n", str_line);
 		return;
 	} 
 
 	char* timestamp = (char*) calloc(timestamp_end_pos + 2, sizeof(char));
 	if (timestamp == NULL) {
-		printf("failed to allocate the timestamp buff.\n");
+		ERR_KMSG("failed to allocate the timestamp buff.\n");
 		return;
 	}
 	mem_cpy(timestamp, str_line + str_pos, timestamp_end_pos + 1);
@@ -230,7 +232,7 @@ void print_line(char* str_line) {
 }
 
 void print_kmsg(char* kmesg, unsigned int len) {
-	printf(TIMESTAMP_COLOR "KMESG: " RESET_COLOR "Read %d bytes, messages in the kernel ring buffer: \n", len);
+	printf(KMESG_COLOR "KMESG: " RESET_COLOR "Read %d bytes, messages in the kernel ring buffer: \n", len);
 	// Extract the lines and then process each one of them
 	unsigned int lines_cnt = 0;
 	char** lines = extract_lines(kmesg, len, &lines_cnt);
@@ -244,7 +246,7 @@ void print_kmsg(char* kmesg, unsigned int len) {
 }
 
 void print_color_demo(void) {
-	printf("Color demo:\n");
+	printf(KMESG_COLOR "KMESG:" RESET_COLOR "color demo:\n");
 	printf(EMERGENCY_COLOR "  -- EMERGENCY_COLOR --  " RESET_COLOR "\n");
 	printf(ALERT_COLOR "  -- ALERT_COLOR --  " RESET_COLOR "\n");
 	printf(CRITICAL_COLOR "  -- CRITICAL_COLOR --  " RESET_COLOR "\n");
@@ -286,7 +288,7 @@ void print_helper(void) {
 	printf("\t-f:  Set the MIN_FACILITY using the value passed after the flag. The default value is '%s'.\n", facilities_names[min_facility]);
 	printf("\t-l:  List SEVERITY levels and FACILITY levels.\n");
 	printf("\t-h:  Show this page.\n");
-	printf("\n" EMERGENCY_COLOR "KMESG: " DEBUG_COLOR "A colored alternative to" WARNING_COLOR " dmesg" DEBUG_COLOR ", by" TIMESTAMP_COLOR " \'TheProgxy\'." RESET_COLOR"\n");
+	printf("\n" EMERGENCY_COLOR "KMESG: " DEBUG_COLOR "A colored alternative to " NOTICE_COLOR "dmesg" WARNING_COLOR ", by" KMESG_COLOR " \'TheProgxy\'." RESET_COLOR"\n");
 	return; 
 }
 
@@ -307,7 +309,7 @@ void read_flag(char* flag_arg) {
 		else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'h') mod_func = HELPER;
 		else {
 			mod_func = INVALID_FLAG;
-			printf("error: invalid flag: '%s'\n.", flag_arg);
+			ERR_KMSG("invalid flag: '%s'\n.", flag_arg);
 			return;
 		}
 	} else {
@@ -316,7 +318,7 @@ void read_flag(char* flag_arg) {
 		else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'h') mod_func = HELPER;
 		else {
 			mod_func = INVALID_FLAG;
-			printf("error: invalid flag: '%s'\n.", flag_arg);
+			ERR_KMSG("invalid flag: '%s'\n.", flag_arg);
 			return;
 		}
 	}
@@ -340,7 +342,7 @@ void read_flag(char* flag_arg) {
 			return;
 		} else if (log_level > 8 || log_level < 1) {
 			mod_func = INVALID_FLAG;
-			printf("error: invalid log level: %d, log levels must be in interval [1..8].\n", log_level);
+			ERR_KMSG("invalid log level: %d, log levels must be in interval [1..8].\n", log_level);
 			return;
 		}
 	} else if (mod_func == SET_MIN_SEVERITY || mod_func == SET_MIN_FACILITY) {
@@ -392,7 +394,7 @@ int main(int argc, char* argv[]) {
 				perror("failed to execute the function: " CRITICAL_COLOR "SIZE_UNREAD" RESET_COLOR ", because");
 				return -1;
 			}
-	    } else if (!kern_msg_buf_size) kern_msg_buf_size = DEFAULT_MSG_BUF_SIZE;
+		} else if (!kern_msg_buf_size) kern_msg_buf_size = DEFAULT_MSG_BUF_SIZE;
 		
 		printf(TIMESTAMP_COLOR "KMESG:" RESET_COLOR " the buffer size is set to \'%d\' bytes.\n", kern_msg_buf_size);	
 
