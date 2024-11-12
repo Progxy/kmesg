@@ -5,6 +5,6 @@ install: compile
 	mv ./kmesg /usr/local/sbin
 
 compile: kmesg.c
-	gcc -std=c11 -Wall -Wextra -pedantic kmesg.c -o kmesg
+	gcc -std=gnu11 -Wall -Wextra -pedantic kmesg.c -o kmesg
 clean: kmesg
 	rm -rf kmesg

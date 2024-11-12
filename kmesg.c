@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/klog.h>
+#include <errno.h>
+#include <string.h>
 
 #define CHR_TO_INT(chr) ((int)chr - 48)
 #define IS_A_VAL(chr) (chr >= 48 && chr <= 57)
@@ -28,6 +30,7 @@ typedef enum LogLevels {
 #define INFO_COLOR        "\033[38;5;37m"     // Green for informational messages
 #define DEBUG_COLOR       "\033[38;5;243m"    // Grey for debug messages
 #define TIMESTAMP_COLOR   "\033[38;5;39m"     // Cyan for timestamps
+#define KMESG_COLOR       "\033[38;5;208m"    // Orange
 
 const char* log_level_colors[] = {
     EMERGENCY_COLOR,  // LOG_EMERG
@@ -40,7 +43,8 @@ const char* log_level_colors[] = {
     DEBUG_COLOR       // LOG_DEBUG
 };
 
-#define ERR_KMSG(...) printf(ERROR_COLOR "KMESG_ERROR" RESET_COLOR "(line:" __LINE__"):" __VA_ARGS__)
+#define KMESG_ERR(fmt, ...) printf(ERROR_COLOR "KMESG_ERROR" RESET_COLOR "(line: %u):" fmt, __LINE__, ##__VA_ARGS__)
+#define kmesg_perror(fmt, ...) KMESG_ERR(fmt WARNING_COLOR "%s.\n" RESET_COLOR, ##__VA_ARGS__, strerror(errno))
 
 // Kernel function types
 #define READ          2
@@ -121,7 +125,7 @@ int str_to_int(char* str) {
 	unsigned int i = 0;
 	while (str[i] != '\0') {
 		if (!IS_A_VAL(str[i])) {
-			ERR_KMSG(" this is not a valid value: " CRITICAL_COLOR "'%s'" RESET_COLOR ".\n", str);
+			KMESG_ERR(" this is not a valid value: " CRITICAL_COLOR "'%s'" RESET_COLOR ".\n", str);
 			return -1;
 		}
 		value *= 10;
@@ -135,19 +139,19 @@ char** extract_lines(char* str, unsigned int len, unsigned int* lines_cnt) {
 	unsigned int ref_cnt = ref_chr_cnt(str, len, '\n');
 	char** lines = (char**) calloc(ref_cnt, sizeof(char*));
 	if (lines == NULL) {
-		ERR_KMSG("failed to allocate lines buff.\n");
+		KMESG_ERR("failed to allocate lines buff.\n");
 		return NULL;
 	}
 
 	unsigned int str_pos = 0;
 	for (*lines_cnt = 0; *lines_cnt < ref_cnt; ++(*lines_cnt)) {
 		long long int ref_pos = find_chr(str + str_pos, len - str_pos, '\n');
-		if (ref_pos < 0) ERR_KMSG("ref not found, str_pos: %u, line_cnt: %u.\n", str_pos, *lines_cnt + 1);
+		if (ref_pos < 0) KMESG_ERR("ref not found, str_pos: %u, line_cnt: %u.\n", str_pos, *lines_cnt + 1);
 		lines[*lines_cnt] = (char*) calloc(ref_pos + 1, sizeof(char));
 		if (lines[*lines_cnt] == NULL) {
 			for (unsigned int i = 0; i < *lines_cnt - 1; ++i) free(lines[*lines_cnt]);
 			free(lines);
-			ERR_KMSG("failed to allocate %u line.\n", *lines_cnt + 1);
+			KMESG_ERR("failed to allocate %u line.\n", *lines_cnt + 1);
 			return NULL;
 		}
 		mem_cpy(lines[*lines_cnt], str + str_pos, ref_pos);
@@ -166,13 +170,13 @@ void print_line(char* str_line) {
 	// Extract the log level is composed by severity and facility (combined value = (facility x 8) + severity), in this way we can filter messages by facility and severity
 	long long int log_level_end_pos = find_chr(str_line + str_pos, len - str_pos, '>');
 	if (log_level_end_pos < 0) {
-		ERR_KMSG("invalid string format: '%s'.\n", str_line);
+		KMESG_ERR("invalid string format: '%s'.\n", str_line);
 		return;
 	}
 	
 	char* log_level_str = (char*) calloc(log_level_end_pos + 1, sizeof(char));
 	if (log_level_str == NULL) {
-		ERR_KMSG("failed to allocate the log level buf.\n");
+		KMESG_ERR("failed to allocate the log level buf.\n");
 		return;
 	}
 	mem_cpy(log_level_str, str_line + str_pos, log_level_end_pos);
@@ -191,13 +195,13 @@ void print_line(char* str_line) {
 	// Extract the timestamp
 	long long int timestamp_end_pos = find_chr(str_line + str_pos, len - str_pos, ']');
 	if (timestamp_end_pos < 0) {
-		ERR_KMSG("invalid string format: '%s'.\n", str_line);
+		KMESG_ERR("invalid string format: '%s'.\n", str_line);
 		return;
 	} 
 
 	char* timestamp = (char*) calloc(timestamp_end_pos + 2, sizeof(char));
 	if (timestamp == NULL) {
-		ERR_KMSG("failed to allocate the timestamp buff.\n");
+		KMESG_ERR("failed to allocate the timestamp buff.\n");
 		return;
 	}
 	mem_cpy(timestamp, str_line + str_pos, timestamp_end_pos + 1);
@@ -309,7 +313,7 @@ void read_flag(char* flag_arg) {
 		else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'h') mod_func = HELPER;
 		else {
 			mod_func = INVALID_FLAG;
-			ERR_KMSG("invalid flag: '%s'\n.", flag_arg);
+			KMESG_ERR("invalid flag: '%s'\n.", flag_arg);
 			return;
 		}
 	} else {
@@ -318,7 +322,7 @@ void read_flag(char* flag_arg) {
 		else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'h') mod_func = HELPER;
 		else {
 			mod_func = INVALID_FLAG;
-			ERR_KMSG("invalid flag: '%s'\n.", flag_arg);
+			KMESG_ERR("invalid flag: '%s'\n.", flag_arg);
 			return;
 		}
 	}
@@ -342,7 +346,7 @@ void read_flag(char* flag_arg) {
 			return;
 		} else if (log_level > 8 || log_level < 1) {
 			mod_func = INVALID_FLAG;
-			ERR_KMSG("invalid log level: %d, log levels must be in interval [1..8].\n", log_level);
+			KMESG_ERR("invalid log level: %d, log levels must be in interval [1..8].\n", log_level);
 			return;
 		}
 	} else if (mod_func == SET_MIN_SEVERITY || mod_func == SET_MIN_FACILITY) {
@@ -386,30 +390,29 @@ int main(int argc, char* argv[]) {
 	if (mod_func == READ || mod_func == READ_ALL || mod_func == READ_CLEAR || mod_func == READ_UNREAD) {
 		if (!kern_msg_buf_size && (mod_func == READ_ALL || mod_func == READ_CLEAR)) {
 			if ((kern_msg_buf_size = klogctl(SIZE_BUFFER, NULL, 0)) < 0) {
-				perror("failed to execute the function: " CRITICAL_COLOR "SIZE_BUFFER" RESET_COLOR ", because");
+				kmesg_perror("failed to execute the function: " CRITICAL_COLOR "SIZE_BUFFER" RESET_COLOR ", because: ");
 				return -1;
 			}
 		} else if (mod_func == READ_UNREAD) { 
 			if ((kern_msg_buf_size = klogctl(SIZE_UNREAD, NULL, 0)) < 0) {
-				perror("failed to execute the function: " CRITICAL_COLOR "SIZE_UNREAD" RESET_COLOR ", because");
+				kmesg_perror("failed to execute the function: " CRITICAL_COLOR "SIZE_UNREAD" RESET_COLOR ", because: ");
 				return -1;
 			}
+			mod_func = READ; // Change the mod func to READ, to execute the READ command, as part of the READ_UNREAD command
 		} else if (!kern_msg_buf_size) kern_msg_buf_size = DEFAULT_MSG_BUF_SIZE;
 		
-		printf(TIMESTAMP_COLOR "KMESG:" RESET_COLOR " the buffer size is set to \'%d\' bytes.\n", kern_msg_buf_size);	
+		printf(KMESG_COLOR "KMESG:" RESET_COLOR " the buffer size is set to \'%d\' bytes.\n", kern_msg_buf_size);	
 
 		char* msg_buff = (char*) calloc(kern_msg_buf_size, sizeof(char));
 		if (msg_buff == NULL) {
-			printf("failed to allocate the msg buffer.\n");
+			KMESG_ERR("failed to allocate the msg buffer.\n");
 			return -1;
 		}
 
 		int ret = 0;
 		if ((ret = klogctl(mod_func, msg_buff, kern_msg_buf_size)) < 0) {
 			free(msg_buff);
-			printf("failed to execute the function: " CRITICAL_COLOR "%s" RESET_COLOR, mod_func_names[mod_func]);
-			fflush(stdout);
-			perror(", because");
+			kmesg_perror("failed to execute the function: " CRITICAL_COLOR "%s" RESET_COLOR ", because: ", mod_func_names[mod_func]);
 			return -1;
 		}
 
@@ -422,9 +425,7 @@ int main(int argc, char* argv[]) {
 		else ret = klogctl(mod_func, NULL, 0);
 		
 		if (ret < 0) {
-			printf("failed to execute the function: " CRITICAL_COLOR "%s" RESET_COLOR, mod_func_names[mod_func]);
-			fflush(stdout);
-			perror(", because");
+			kmesg_perror("failed to execute the function: " CRITICAL_COLOR "%s" RESET_COLOR ", because: ", mod_func_names[mod_func]);
 			return -1;
 		}
 
