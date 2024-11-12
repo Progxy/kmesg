@@ -46,6 +46,8 @@ const char* log_level_colors[] = {
 #define KMESG_ERR(fmt, ...) printf(ERROR_COLOR "KMESG_ERROR" RESET_COLOR "(line: %u):" fmt, __LINE__, ##__VA_ARGS__)
 #define kmesg_perror(fmt, ...) KMESG_ERR(fmt WARNING_COLOR "%s.\n" RESET_COLOR, ##__VA_ARGS__, strerror(errno))
 
+#define KMESG_VERSION "1.0.0"
+
 // Kernel function types
 #define READ          2
 #define READ_ALL      3
@@ -292,7 +294,7 @@ void print_helper(void) {
 	printf("\t-f:  Set the MIN_FACILITY using the value passed after the flag. The default value is '%s'.\n", facilities_names[min_facility]);
 	printf("\t-l:  List SEVERITY levels and FACILITY levels.\n");
 	printf("\t-h:  Show this page.\n");
-	printf("\n" EMERGENCY_COLOR "KMESG: " DEBUG_COLOR "A colored alternative to " NOTICE_COLOR "dmesg" WARNING_COLOR ", by" KMESG_COLOR " \'TheProgxy\'." RESET_COLOR"\n");
+	printf("\n" KMESG_COLOR "KMESG: " DEBUG_COLOR "A colored alternative to " NOTICE_COLOR "dmesg" WARNING_COLOR ", by" KMESG_COLOR " \'TheProgxy\'" RESET_COLOR ", (" KMESG_COLOR "KMESG_VERSION: " TIMESTAMP_COLOR KMESG_VERSION RESET_COLOR").\n");
 	return; 
 }
 
