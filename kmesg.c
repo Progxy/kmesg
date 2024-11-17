@@ -15,12 +15,19 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include <termcap.h>
+#include <termios.h>
+#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/klog.h>
 #include <errno.h>
 #include <string.h>
 
+typedef unsigned char bool;
+
+#define FALSE 0
+#define TRUE 1
 #define CHR_TO_INT(chr) ((int)chr - 48)
 #define IS_A_VAL(chr) (chr >= 48 && chr <= 57)
 
@@ -111,6 +118,8 @@ static unsigned int min_facility = FACILITY_KERNEL;
 static unsigned char mod_func = 0;
 static int kern_msg_buf_size = 0;
 static int log_level = KERN_INFO;
+static bool less_mode = FALSE;
+static bool reverse_mode = FALSE;
 
 unsigned int str_len(char* str) {
 	if (str == NULL) return 0;
@@ -122,6 +131,12 @@ unsigned int str_len(char* str) {
 static void mem_cpy(void* dest, void* src, size_t size) {
 	if (dest == NULL || src == NULL) return;
 	for (size_t i = 0; i < size; ++i) ((unsigned char*) dest)[i] = ((unsigned char*)src)[i];
+	return;
+}
+
+static void mem_set(void* dest, unsigned char val, size_t size) {
+	if (dest == NULL) return;
+	for (size_t i = 0; i < size; ++i) ((unsigned char*) dest)[i] = val;
 	return;
 }
 
@@ -181,7 +196,45 @@ char** extract_lines(char* str, unsigned int len, unsigned int* lines_cnt) {
 	return lines;
 }
 
-void print_line(char* str_line) {
+void filter_severity_facility(char*** lines, unsigned int* lines_cnt) {
+	char log_level_str[25] = {0};
+
+	for (unsigned int i = 0; i < *lines_cnt; ++i) {
+		// Line example "<log_level_num> [timestamp] info..."
+		char* str_line = (*lines)[i];
+		unsigned int len = str_len(str_line);
+		unsigned int str_pos = 1;
+
+		// Extract the log level is composed by severity and facility (combined value = (facility x 8) + severity), in this way we can filter messages by facility and severity
+		long long int log_level_end_pos = find_chr(str_line + str_pos, len - str_pos, '>');
+		if (log_level_end_pos < 0) {
+			for (unsigned int t = i; t < *lines_cnt - 1; ++t) (*lines)[t] = (*lines)[t + 1];
+			(*lines_cnt)--;
+			--i;
+			continue;
+		}
+		
+		mem_cpy(log_level_str, str_line + str_pos, log_level_end_pos);
+		log_level_str[log_level_end_pos] = '\0';
+
+		unsigned int log_level = str_to_int(log_level_str);
+		unsigned int facility = log_level / 8;
+		unsigned int severity = log_level % 8;
+		mem_set(log_level_str, 0, 25); // Reset the string after use
+
+		if (severity > min_severity || facility > min_facility) {
+			for (unsigned int t = i; t < *lines_cnt - 1; ++t) (*lines)[t] = (*lines)[t + 1];
+			(*lines_cnt)--;
+			--i;
+		}
+	}
+
+	*lines = (char**) realloc(*lines, sizeof(char*) * (*lines_cnt));
+
+	return;
+}
+
+bool print_line(char* str_line) {
 	// Line example "<log_level_num> [timestamp] info..."
 	unsigned int len = str_len(str_line);
 	unsigned int str_pos = 1;
@@ -190,38 +243,34 @@ void print_line(char* str_line) {
 	long long int log_level_end_pos = find_chr(str_line + str_pos, len - str_pos, '>');
 	if (log_level_end_pos < 0) {
 		KMESG_ERR("invalid string format: '%s'.\n", str_line);
-		return;
+		return FALSE;
 	}
-	
+
 	char* log_level_str = (char*) calloc(log_level_end_pos + 1, sizeof(char));
 	if (log_level_str == NULL) {
-		KMESG_ERR("failed to allocate the log level buf.\n");
-		return;
+	   KMESG_ERR("failed to allocate the log level buf.\n");
+	   return FALSE;
 	}
+
 	mem_cpy(log_level_str, str_line + str_pos, log_level_end_pos);
 	log_level_str[log_level_end_pos] = '\0';
 	str_pos += log_level_end_pos + 1;
 
 	unsigned int log_level = str_to_int(log_level_str);
-	unsigned int facility = log_level / 8;
 	unsigned int severity = log_level % 8;
 	free(log_level_str);
-
-	if (severity > min_severity || facility > min_facility) {
-		return;
-	}
 
 	// Extract the timestamp
 	long long int timestamp_end_pos = find_chr(str_line + str_pos, len - str_pos, ']');
 	if (timestamp_end_pos < 0) {
 		KMESG_ERR("invalid string format: '%s'.\n", str_line);
-		return;
+		return FALSE;
 	} 
 
 	char* timestamp = (char*) calloc(timestamp_end_pos + 2, sizeof(char));
 	if (timestamp == NULL) {
 		KMESG_ERR("failed to allocate the timestamp buff.\n");
-		return;
+		return FALSE;
 	}
 	mem_cpy(timestamp, str_line + str_pos, timestamp_end_pos + 1);
 	timestamp[timestamp_end_pos + 1] = '\0';
@@ -232,14 +281,14 @@ void print_line(char* str_line) {
 	// Print the rest if the identifier is not present
 	if (column_ref < 0) {
 		printf(TIMESTAMP_COLOR "%s" RESET_COLOR "%s\n", timestamp, (str_line + str_pos));
-		return;
+		return TRUE;
 	}
 	
 	char* module_identifier = (char*) calloc(column_ref + 2, sizeof(char)); 
 	if (module_identifier == NULL) {
 		free(timestamp);
-		printf("failed to allocate module_identifier.\n");
-		return;
+		KMESG_ERR("failed to allocate module_identifier.\n");
+		return FALSE;
 	}
 
 	mem_cpy(module_identifier, str_line + str_pos, column_ref + 1);
@@ -251,6 +300,98 @@ void print_line(char* str_line) {
 	free(timestamp);
 	free(module_identifier);
 
+	return TRUE;
+}
+
+struct termios enable_raw_mode() {
+	struct termios orig_termios = {0};
+    struct termios raw = {0};
+
+    // Get current terminal settings
+    tcgetattr(STDIN_FILENO, &orig_termios);
+    raw = orig_termios;
+
+    // Modify settings for raw mode
+	raw.c_lflag &= ~(ECHO | ICANON); // Disable echo and canonical mode
+	if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) {
+		kmesg_perror("failed to set tcsetattr");
+		return orig_termios;
+	}
+	return orig_termios;
+}
+
+void disable_raw_mode(struct termios orig_termios) {
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios); // Restore original settings
+	return;
+}
+
+void print_less(char** lines, unsigned int lines_cnt) {
+	// Load termcap and enable raw mode
+    char term_buffer[2048] = {0};
+    if (tgetent(term_buffer, getenv("TERM")) <= 0) return;
+
+	// Switch to the alternate screen buffer
+    printf("\033[?1049h");
+
+    char *clear_cmd = tgetstr("cl", NULL);
+    unsigned int term_height = tgetnum("li") - 2;
+    struct termios original_settings = enable_raw_mode();
+
+	// Init Screen
+	unsigned int start_line = 0; 
+    for (unsigned int i = start_line, j = 0; (j < term_height) && (i < lines_cnt); ++i, ++j) {
+		if (!print_line(lines[i])) {
+			disable_raw_mode(original_settings);
+			printf("\033[?1049l"); // Restore the primary screen buffer
+			return;
+		} 
+	}
+	printf(KMESG_COLOR "KMESG: " RESET_COLOR "Line %u out of %u (%u%%)\n:", start_line + term_height, lines_cnt, (unsigned int) (((float)(start_line + term_height) / lines_cnt) * 100.0f));
+	fflush(stdout);
+		
+	char c = 0;
+	while (read(STDIN_FILENO, &c, 1) == 1) {
+		if (c == 'q') break;
+		else if ((c == 'j') && (start_line < lines_cnt - term_height)) start_line++; 
+		else if ((c == 'k') && (start_line > 0)) start_line--;
+		else if (c == '\033') {
+			char seq[3];
+			if (read(STDIN_FILENO, &seq[0], 1) == 0) break;
+			if (read(STDIN_FILENO, &seq[1], 1) == 0) break;
+			
+			if (seq[0] == '[') {
+				if ((seq[1] == 'A') && (start_line > 0)) start_line--;
+				else if ((seq[1] == 'B') && (start_line < lines_cnt - term_height)) start_line++;
+			}
+		}
+
+		printf("%s", clear_cmd); 
+		
+		for (unsigned int i = start_line, j = 0; (j < term_height) && (i < lines_cnt); ++i, ++j) {
+			if (!print_line(lines[i])) {
+				disable_raw_mode(original_settings);
+				printf("\033[?1049l"); // Restore the primary screen buffer
+				return;
+			}
+		}
+
+		printf(KMESG_COLOR "KMESG: " RESET_COLOR "Line %u out of %u (%u%%)\n:", start_line + term_height, lines_cnt, (unsigned int) (((float)(start_line + term_height) / lines_cnt) * 100.0f));
+		fflush(stdout);
+	}
+
+    disable_raw_mode(original_settings);
+	printf("\033[?1049l"); // Restore the primary screen buffer
+    
+	return;
+
+}
+
+void reverse_str_arr(char*** str_arr, unsigned int size) {
+	for (unsigned int i = 0; i < (size >> 1); ++i) {
+		char* temp = (*str_arr)[i];
+		(*str_arr)[i] = (*str_arr)[size - 1 - i];
+		(*str_arr)[size - 1 - i] = temp;
+	}
 	return;
 }
 
@@ -260,11 +401,17 @@ void print_kmsg(char* kmesg, unsigned int len) {
 	unsigned int lines_cnt = 0;
 	char** lines = extract_lines(kmesg, len, &lines_cnt);
 	if (lines == NULL || !lines_cnt) return; 
-	for (unsigned int i = 0; i < lines_cnt; ++i) {
-		print_line(lines[i]);
-		free(lines[i]);
+	filter_severity_facility(&lines, &lines_cnt);
+	if (reverse_mode) reverse_str_arr(&lines, lines_cnt);
+
+	if (less_mode) print_less(lines, lines_cnt);
+	else {
+		for (unsigned int i = 0; i < lines_cnt; ++i) print_line(lines[i]);
 	}
+
+	for (unsigned int i = 0; i < lines_cnt; ++i) free(lines[i]);
 	free(lines);
+	
 	return;
 }
 
@@ -304,8 +451,10 @@ void print_helper(void) {
 	printf("\t-ra: This is the default behaviour used by KMESG. Read all messages remaining in the ring buffer. If a value is passed after the flag, reads the last 'val' bytes from the log buffer.\n");
 	printf("\t-rc: Read and clear all messages remaining in the ring buffer. If a value is passed after the flag, reads the last 'val' bytes from the log buffer.\n");
 	printf("\t-ru: Read the messages that have not been read. It is similar to executing -r with -u returned bytes len.\n");
+	printf("\t-rv: Print in reverse.\n");
 	printf("\t-ce: Set the console log level to the default, so that messages are printed to the console.\n");
 	printf("\t-cd: Set the console log level to the minimum, so that no messages are printed to the console.\n");
+	printf("\t-cl: Print using a 'less' mode.\n");
 	printf("\t-L:  Set the console log level to the value passed after the flag, which must be an integer between 1 and 8 (inclusive).\n");
 	printf("\t-s:  Set the MIN_SEVERITY using the value passed after the flag. The default value is '%s'.\n", severities_names[min_severity]);
 	printf("\t-f:  Set the MIN_FACILITY using the value passed after the flag. The default value is '%s'.\n", facilities_names[min_facility]);
@@ -325,8 +474,10 @@ void read_flag(char* flag_arg) {
 		else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'r' && flag_arg[2] == 'a') mod_func = READ_ALL;
 		else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'r' && flag_arg[2] == 'c') mod_func = READ_CLEAR;
 		else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'r' && flag_arg[2] == 'u') mod_func = READ_UNREAD;
+		else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'r' && flag_arg[2] == 'v') reverse_mode = TRUE;
 		else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'c' && flag_arg[2] == 'e') mod_func = CONSOLE_ON;
 		else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'c' && flag_arg[2] == 'd') mod_func = CONSOLE_OFF;
+		else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'c' && flag_arg[2] == 'l') less_mode = TRUE;
 		else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'L') mod_func = CONSOLE_LEVEL;
 		else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'l') mod_func = LIST_LEVELS;
 		else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'h') mod_func = HELPER;
