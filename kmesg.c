@@ -72,7 +72,7 @@ const char* log_level_colors[] = {
 #define KMESG_ERR(fmt, ...) printf(ERROR_COLOR "KMESG_ERROR" RESET_COLOR "(line: %u):" fmt, __LINE__, ##__VA_ARGS__)
 #define kmesg_perror(fmt, ...) KMESG_ERR(fmt WARNING_COLOR "%s.\n" RESET_COLOR, ##__VA_ARGS__, strerror(errno))
 
-#define KMESG_VERSION "1.0.0"
+#define KMESG_VERSION "1.1.0"
 
 // Kernel function types
 #define READ          2
