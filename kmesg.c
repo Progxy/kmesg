@@ -466,6 +466,7 @@ void print_helper(void) {
 
 void read_flag(char* flag_arg) {
 	unsigned int arg_len = str_len(flag_arg);
+	unsigned int internal_func = 0;
 	if (!mod_func) {
 		if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'C') mod_func = CLEAR; 
 		else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'R') mod_func = READ;
@@ -474,12 +475,17 @@ void read_flag(char* flag_arg) {
 		else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'r' && flag_arg[2] == 'a') mod_func = READ_ALL;
 		else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'r' && flag_arg[2] == 'c') mod_func = READ_CLEAR;
 		else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'r' && flag_arg[2] == 'u') mod_func = READ_UNREAD;
-		else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'r' && flag_arg[2] == 'v') reverse_mode = TRUE;
-		else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'c' && flag_arg[2] == 'e') mod_func = CONSOLE_ON;
+		else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'r' && flag_arg[2] == 'v') { 
+			reverse_mode = TRUE;
+			return;
+		} else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'c' && flag_arg[2] == 'e') mod_func = CONSOLE_ON;
 		else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'c' && flag_arg[2] == 'd') mod_func = CONSOLE_OFF;
-		else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'c' && flag_arg[2] == 'l') less_mode = TRUE;
-		else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'L') mod_func = CONSOLE_LEVEL;
+		else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'c' && flag_arg[2] == 'l') { 
+			less_mode = TRUE;
+		} else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'L') mod_func = CONSOLE_LEVEL;
 		else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'l') mod_func = LIST_LEVELS;
+		else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 's') internal_func = SET_MIN_SEVERITY;
+		else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'f') internal_func = SET_MIN_FACILITY;
 		else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'h') mod_func = HELPER;
 		else {
 			mod_func = INVALID_FLAG;
@@ -487,9 +493,11 @@ void read_flag(char* flag_arg) {
 			return;
 		}
 	} else {
-		if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 's') mod_func = SET_MIN_SEVERITY;
-		else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'f') mod_func = SET_MIN_FACILITY;
+		if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 's') internal_func = SET_MIN_SEVERITY;
+		else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'f') internal_func = SET_MIN_FACILITY;
 		else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'h') mod_func = HELPER;
+		else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'r' && flag_arg[2] == 'v') reverse_mode = TRUE;
+		else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'c' && flag_arg[2] == 'l') less_mode = TRUE;
 		else {
 			mod_func = INVALID_FLAG;
 			KMESG_ERR("invalid flag: '%s'\n.", flag_arg);
@@ -498,13 +506,28 @@ void read_flag(char* flag_arg) {
 	}
 	
 	if (mod_func == HELPER || mod_func == LIST_LEVELS || mod_func == COLOR_DEMO) return;
-	
+
+	if (internal_func) {
+		long long int value_pos = find_chr(flag_arg, arg_len, '=');
+		if (value_pos < 0) return;
+		int value = str_to_int(flag_arg + value_pos + 1);
+		if (value < 0) {
+			mod_func = INVALID_FLAG;
+			KMESG_ERR("not a value: '%s'\n", flag_arg + value_pos + 1);
+			return;
+		}
+		if (internal_func == SET_MIN_SEVERITY) min_severity = value;
+		else min_facility = value;
+		return;
+	}
+
 	if (mod_func == READ || mod_func == READ_ALL || mod_func == READ_CLEAR) {
 		long long int value_pos = find_chr(flag_arg, arg_len, '=');
 		if (value_pos < 0) return;
 		kern_msg_buf_size = str_to_int(flag_arg + value_pos + 1);
 		if (kern_msg_buf_size < 0) {
 			mod_func = INVALID_FLAG;
+			KMESG_ERR("not a value: '%s'\n", flag_arg + value_pos + 1);
 			return;
 		}
 	} else if (mod_func == CONSOLE_LEVEL) {
@@ -513,23 +536,14 @@ void read_flag(char* flag_arg) {
 		log_level = str_to_int(flag_arg + value_pos + 1);
 		if (log_level < 0) {
 			mod_func = INVALID_FLAG;
+			KMESG_ERR("not a value: '%s'\n", flag_arg + value_pos + 1);
 			return;
 		} else if (log_level > 8 || log_level < 1) {
 			mod_func = INVALID_FLAG;
 			KMESG_ERR("invalid log level: %d, log levels must be in interval [1..8].\n", log_level);
 			return;
 		}
-	} else if (mod_func == SET_MIN_SEVERITY || mod_func == SET_MIN_FACILITY) {
-		long long int value_pos = find_chr(flag_arg, arg_len, '=');
-		if (value_pos < 0) return;
-		int value = str_to_int(flag_arg + value_pos + 1);
-		if (value < 0) {
-			mod_func = INVALID_FLAG;
-			return;
-		}
-		if (mod_func == SET_MIN_SEVERITY) min_severity = value;
-		else min_facility = value;
-	}
+	} 
 	
 	return;
 }
