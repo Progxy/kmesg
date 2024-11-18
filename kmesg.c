@@ -30,6 +30,8 @@ typedef unsigned char bool;
 #define TRUE 1
 #define CHR_TO_INT(chr) ((int)chr - 48)
 #define IS_A_VAL(chr) (chr >= 48 && chr <= 57)
+#define MAX(a, b) a > b ? a : b
+#define MIN(a, b) a < b ? a : b
 
 // Define log levels as an enum
 typedef enum LogLevels {
@@ -153,8 +155,8 @@ long long int find_chr(char* str, unsigned int len, char chr) {
 	return -1;
 }
 
-int str_to_int(char* str) {
-	unsigned int value = 0;
+long long int str_to_int(char* str) {
+	long long int value = 0;
 	if (str == NULL) return 0;
 	unsigned int i = 0;
 	while (str[i] != '\0') {
@@ -325,7 +327,29 @@ void disable_raw_mode(struct termios orig_termios) {
 	return;
 }
 
-void print_less(char** lines, unsigned int lines_cnt) {
+bool print_screen(char* clear_cmd, long long int start_line, unsigned int term_height, char** lines, long long int lines_cnt, struct termios original_settings) {
+	printf("%s", clear_cmd); 
+	
+	for (long long int i = start_line, j = 0; (j < term_height) && (i < lines_cnt); ++i, ++j) {
+		if (i < 0) {
+			printf("\n");
+			continue;
+		}
+
+		if (!print_line(lines[i])) {
+			disable_raw_mode(original_settings);
+			printf("\033[?1049l"); // Restore the primary screen buffer
+			return FALSE;
+		}
+	}
+
+	printf(KMESG_COLOR "KMESG: " RESET_COLOR "Line %lld out of %lld (%u%%)\n:", start_line + term_height, lines_cnt, (unsigned int) (((float)(start_line + term_height) / lines_cnt) * 100.0f));
+	fflush(stdout);
+
+	return TRUE;
+}
+
+void print_less(char** lines, long long int lines_cnt) {
 	// Load termcap and enable raw mode
     char term_buffer[2048] = {0};
     if (tgetent(term_buffer, getenv("TERM")) <= 0) return;
@@ -333,50 +357,73 @@ void print_less(char** lines, unsigned int lines_cnt) {
 	// Switch to the alternate screen buffer
     printf("\033[?1049h");
 
-    char *clear_cmd = tgetstr("cl", NULL);
-    unsigned int term_height = tgetnum("li") - 2;
+    char* clear_cmd = tgetstr("cl", NULL);
+    long long int term_height = tgetnum("li") - 2;
     struct termios original_settings = enable_raw_mode();
 
 	// Init Screen
-	unsigned int start_line = 0; 
-    for (unsigned int i = start_line, j = 0; (j < term_height) && (i < lines_cnt); ++i, ++j) {
-		if (!print_line(lines[i])) {
-			disable_raw_mode(original_settings);
-			printf("\033[?1049l"); // Restore the primary screen buffer
-			return;
-		} 
-	}
-	printf(KMESG_COLOR "KMESG: " RESET_COLOR "Line %u out of %u (%u%%)\n:", start_line + term_height, lines_cnt, (unsigned int) (((float)(start_line + term_height) / lines_cnt) * 100.0f));
-	fflush(stdout);
-		
+	long long int start_line = -term_height + 1; 
+	if (!print_screen(clear_cmd, start_line, term_height, lines, lines_cnt, original_settings)) return;
+	
 	char c = 0;
+	char buf[12];
+	unsigned char buf_index = 0;
 	while (read(STDIN_FILENO, &c, 1) == 1) {
 		if (c == 'q') break;
+		else if (c == 'g' || c == '<') start_line = -term_height + 1;
+		else if (c == 'G' || c == '>') start_line = lines_cnt - term_height;
 		else if ((c == 'j') && (start_line < lines_cnt - term_height)) start_line++; 
-		else if ((c == 'k') && (start_line > 0)) start_line--;
+		else if ((c == 'k') && (start_line > -term_height + 1)) start_line--;
+		else if ((c == ' ') && (start_line < lines_cnt - term_height)) {
+			start_line += term_height; 
+			start_line = MIN(start_line, lines_cnt - term_height);
+		} else if ((c == 'b') && (start_line > -term_height + 1)) {
+			start_line -= term_height;
+			start_line = MAX(start_line, -term_height + 1);
+		}
 		else if (c == '\033') {
 			char seq[3];
 			if (read(STDIN_FILENO, &seq[0], 1) == 0) break;
 			if (read(STDIN_FILENO, &seq[1], 1) == 0) break;
 			
 			if (seq[0] == '[') {
-				if ((seq[1] == 'A') && (start_line > 0)) start_line--;
+				if ((seq[1] == 'A') && (start_line > -term_height + 1)) start_line--;
 				else if ((seq[1] == 'B') && (start_line < lines_cnt - term_height)) start_line++;
 			}
-		}
+		} else if (IS_A_VAL(c)) {
+			buf[buf_index] = c;
+			buf_index++;
 
-		printf("%s", clear_cmd); 
-		
-		for (unsigned int i = start_line, j = 0; (j < term_height) && (i < lines_cnt); ++i, ++j) {
-			if (!print_line(lines[i])) {
-				disable_raw_mode(original_settings);
-				printf("\033[?1049l"); // Restore the primary screen buffer
-				return;
+			while(read(STDIN_FILENO, &c, 1) == 1) {
+				if (IS_A_VAL(c)) {
+					// Shift the chars inside the buffer left
+					if (buf_index == 11) mem_cpy(buf, buf + 1, 11);
+					buf[buf_index] = c;
+					buf_index = (buf_index + 1) % 12;
+					continue;
+				} else if (c == '\n') break;
 			}
-		}
 
-		printf(KMESG_COLOR "KMESG: " RESET_COLOR "Line %u out of %u (%u%%)\n:", start_line + term_height, lines_cnt, (unsigned int) (((float)(start_line + term_height) / lines_cnt) * 100.0f));
-		fflush(stdout);
+			if (buf_index) {
+				long long int line = str_to_int(buf);
+				if (line <= 0 || (line > lines_cnt)) {
+					if (!print_screen(clear_cmd, start_line, term_height - 1, lines, lines_cnt, original_settings)) return;
+					if (line < 0) KMESG_ERR(" Not a value: '%s'\n", buf);
+					else if (line > lines_cnt || line == 0) KMESG_ERR(" Invalid value: %lld, it must be between 1 and %lld\n", line, lines_cnt);
+					buf_index = 0;
+					mem_set(buf, 0, 12);
+					continue;
+				}
+
+				start_line = line - term_height;
+				if (!print_screen(clear_cmd, start_line, term_height, lines, lines_cnt, original_settings)) return;
+			} 
+
+			buf_index = 0;
+			mem_set(buf, 0, 12);
+		}
+		
+		if (!print_screen(clear_cmd, start_line, term_height, lines, lines_cnt, original_settings)) return;
 	}
 
     disable_raw_mode(original_settings);
@@ -454,7 +501,15 @@ void print_helper(void) {
 	printf("\t-rv: Print in reverse.\n");
 	printf("\t-ce: Set the console log level to the default, so that messages are printed to the console.\n");
 	printf("\t-cd: Set the console log level to the minimum, so that no messages are printed to the console.\n");
-	printf("\t-cl: Print using a 'less' mode.\n");
+	printf("\t-cl: Print using a 'less' mode, the following commands apply only to the less mode:\n");
+	printf("\t\tq: Exit.\n");
+	printf("\t\tg: Go to the beginning, alternatively can be used '<'.\n");
+	printf("\t\tG: Go to the end, alternatively can be used '>'.\n");
+	printf("\t\tj: Scroll down one line, alternatively can be used the 'arrow down'.\n");
+	printf("\t\tk: Scroll up one line, alternatively can be used the 'arrow up'.\n");
+	printf("\t\tSpace: Scroll down one screen.\n");
+	printf("\t\tb: Scroll up one screen.\n");
+	printf("\t\t[numbers]-Enter: Navigate to the specified line (max 12 digits). Exceeding 12 shifts input left to make space for the new digit.\n");
 	printf("\t-L:  Set the console log level to the value passed after the flag, which must be an integer between 1 and 8 (inclusive).\n");
 	printf("\t-s:  Set the MIN_SEVERITY using the value passed after the flag. The default value is '%s'.\n", severities_names[min_severity]);
 	printf("\t-f:  Set the MIN_FACILITY using the value passed after the flag. The default value is '%s'.\n", facilities_names[min_facility]);
@@ -513,7 +568,6 @@ void read_flag(char* flag_arg) {
 		int value = str_to_int(flag_arg + value_pos + 1);
 		if (value < 0) {
 			mod_func = INVALID_FLAG;
-			KMESG_ERR("not a value: '%s'\n", flag_arg + value_pos + 1);
 			return;
 		}
 		if (internal_func == SET_MIN_SEVERITY) min_severity = value;
@@ -527,7 +581,6 @@ void read_flag(char* flag_arg) {
 		kern_msg_buf_size = str_to_int(flag_arg + value_pos + 1);
 		if (kern_msg_buf_size < 0) {
 			mod_func = INVALID_FLAG;
-			KMESG_ERR("not a value: '%s'\n", flag_arg + value_pos + 1);
 			return;
 		}
 	} else if (mod_func == CONSOLE_LEVEL) {
@@ -536,7 +589,6 @@ void read_flag(char* flag_arg) {
 		log_level = str_to_int(flag_arg + value_pos + 1);
 		if (log_level < 0) {
 			mod_func = INVALID_FLAG;
-			KMESG_ERR("not a value: '%s'\n", flag_arg + value_pos + 1);
 			return;
 		} else if (log_level > 8 || log_level < 1) {
 			mod_func = INVALID_FLAG;
