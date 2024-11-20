@@ -338,7 +338,6 @@ bool print_screen(char* clear_cmd, long long int start_line, unsigned int term_h
 
 		if (!print_line(lines[i])) {
 			disable_raw_mode(original_settings);
-			printf("\033[?1049l"); // Restore the primary screen buffer
 			return FALSE;
 		}
 	}
@@ -353,9 +352,6 @@ void print_less(char** lines, long long int lines_cnt) {
 	// Load termcap and enable raw mode
     char term_buffer[2048] = {0};
     if (tgetent(term_buffer, getenv("TERM")) <= 0) return;
-
-	// Switch to the alternate screen buffer
-    printf("\033[?1049h");
 
     char* clear_cmd = tgetstr("cl", NULL);
     long long int term_height = tgetnum("li") - 2;
@@ -427,7 +423,6 @@ void print_less(char** lines, long long int lines_cnt) {
 	}
 
     disable_raw_mode(original_settings);
-	printf("\033[?1049l"); // Restore the primary screen buffer
     
 	return;
 
@@ -637,6 +632,7 @@ int main(int argc, char* argv[]) {
 			mod_func = READ; // Change the mod func to READ, to execute the READ command, as part of the READ_UNREAD command
 		} else if (!kern_msg_buf_size) kern_msg_buf_size = DEFAULT_MSG_BUF_SIZE;
 		
+		if (less_mode) printf("\033[?1049h"); // Switch to the alternate screen buffer
 		printf(KMESG_COLOR "KMESG:" RESET_COLOR " the buffer size is set to \'%d\' bytes.\n", kern_msg_buf_size);	
 
 		char* msg_buff = (char*) calloc(kern_msg_buf_size, sizeof(char));
@@ -654,6 +650,7 @@ int main(int argc, char* argv[]) {
 
 		print_kmsg(msg_buff, ret);
 		free(msg_buff);
+		if (less_mode) printf("\033[?1049l"); // Restore the primary screen buffer
 
 	} else if (mod_func == CLEAR || mod_func == CONSOLE_ON || mod_func == CONSOLE_OFF || mod_func == SIZE_UNREAD || mod_func == CONSOLE_LEVEL) {
 		int ret = 0;
