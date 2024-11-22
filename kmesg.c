@@ -185,7 +185,7 @@ char** extract_lines(char* str, unsigned int len, unsigned int* lines_cnt) {
 		if (ref_pos < 0) KMESG_ERR("ref not found, str_pos: %u, line_cnt: %u.\n", str_pos, *lines_cnt + 1);
 		lines[*lines_cnt] = (char*) calloc(ref_pos + 1, sizeof(char));
 		if (lines[*lines_cnt] == NULL) {
-			for (unsigned int i = 0; i < *lines_cnt - 1; ++i) free(lines[*lines_cnt]);
+			for (unsigned int i = 0; i < *lines_cnt; ++i) free(lines[i]);
 			free(lines);
 			KMESG_ERR("failed to allocate %u line.\n", *lines_cnt + 1);
 			return NULL;
@@ -210,6 +210,7 @@ void filter_severity_facility(char*** lines, unsigned int* lines_cnt) {
 		// Extract the log level is composed by severity and facility (combined value = (facility x 8) + severity), in this way we can filter messages by facility and severity
 		long long int log_level_end_pos = find_chr(str_line + str_pos, len - str_pos, '>');
 		if (log_level_end_pos < 0) {
+			free((*lines)[i]);
 			for (unsigned int t = i; t < *lines_cnt - 1; ++t) (*lines)[t] = (*lines)[t + 1];
 			(*lines_cnt)--;
 			--i;
@@ -225,6 +226,7 @@ void filter_severity_facility(char*** lines, unsigned int* lines_cnt) {
 		mem_set(log_level_str, 0, 25); // Reset the string after use
 
 		if (severity > min_severity || facility > min_facility) {
+			free((*lines)[i]);
 			for (unsigned int t = i; t < *lines_cnt - 1; ++t) (*lines)[t] = (*lines)[t + 1];
 			(*lines_cnt)--;
 			--i;
@@ -283,6 +285,7 @@ bool print_line(char* str_line) {
 	// Print the rest if the identifier is not present
 	if (column_ref < 0) {
 		printf(TIMESTAMP_COLOR "%s" RESET_COLOR "%s\n", timestamp, (str_line + str_pos));
+		free(timestamp);
 		return TRUE;
 	}
 	
@@ -450,7 +453,7 @@ void print_kmsg(char* kmesg, unsigned int len) {
 	else {
 		for (unsigned int i = 0; i < lines_cnt; ++i) print_line(lines[i]);
 	}
-
+		
 	for (unsigned int i = 0; i < lines_cnt; ++i) free(lines[i]);
 	free(lines);
 	

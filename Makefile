@@ -7,5 +7,8 @@ install: compile
 compile: kmesg.c
 	gcc -std=gnu11 -Wall -Wextra -pedantic -lncurses kmesg.c -o kmesg
 
+debug: kmesg.c
+	gcc -std=gnu11 -Wall -Wextra -pedantic -ggdb -lncurses kmesg.c -o kmesg
+
 clean: kmesg
 	rm -rf kmesg
