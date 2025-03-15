@@ -666,7 +666,7 @@ int main(int argc, char* argv[]) {
 		}
 
 		if (mod_func == SIZE_UNREAD) printf("The number of bytes currently available to be read from the kernel log buffer is: %d.\n", ret);	
-		else printf("Operation: " CRITICAL_COLOR "%s" RESET_COLOR "executed successfully.\n", mod_func_names[mod_func]);	
+		else printf("Operation: " CRITICAL_COLOR "%s" RESET_COLOR " executed successfully.\n", mod_func_names[mod_func]);	
 
 	} else if (mod_func == COLOR_DEMO) print_color_demo();
 
