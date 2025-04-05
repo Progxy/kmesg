@@ -600,6 +600,7 @@ void read_flag(char* flag_arg) {
 
 // TODO: Should most probably add the "dump kernel ring buffer" feature, along with the search function within -cl
 // TODO: Also should add the possibility to set a certain offset for the dump (instead of dumping the entire buffer content), maybe based on timestamp
+// TODO: Furthermore, should also add the option --no-color for both dumping feature and others
 
 int main(int argc, char* argv[]) {
 	if (argc > 1) {
