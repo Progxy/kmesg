@@ -35,6 +35,13 @@ static KMESGlobal kmesglobal = {
 	.log_level = KERN_INFO,
 };
 
+/* -------------------------------------------------------------------------------------------------------- */
+// ------------------------
+//  Functions Declarations
+// ------------------------
+char** extract_lines(const char* str, unsigned int len, unsigned int* lines_cnt);
+
+/* -------------------------------------------------------------------------------------------------------- */
 // -----------------------
 //  Functions Definitions
 // -----------------------
@@ -52,8 +59,8 @@ char** extract_lines(const char* str, unsigned int len, unsigned int* lines_cnt)
 		if (ref_pos < 0) KMESG_ERR("ref not found, str_pos: %u, line_cnt: %u.\n", str_pos, *lines_cnt + 1);
 		lines[*lines_cnt] = (char*) calloc(ref_pos + 1, sizeof(char));
 		if (lines[*lines_cnt] == NULL) {
-			for (unsigned int i = 0; i < *lines_cnt; ++i) free(lines[i]);
-			free(lines);
+			for (unsigned int i = 0; i < *lines_cnt; ++i) SAFE_FREE(lines[i]);
+			SAFE_FREE(lines);
 			KMESG_ERR("failed to allocate %u line.\n", *lines_cnt + 1);
 			return NULL;
 		}
@@ -77,7 +84,7 @@ void filter_severity_facility(char*** lines, unsigned int* lines_cnt) {
 		// Extract the log level is composed by severity and facility (combined value = (facility x 8) + severity), in this way we can filter messages by facility and severity
 		long long int log_level_end_pos = find_chr(str_line + str_pos, len - str_pos, '>');
 		if (log_level_end_pos < 0) {
-			free((*lines)[i]);
+			SAFE_FREE((*lines)[i]);
 			for (unsigned int t = i; t < *lines_cnt - 1; ++t) (*lines)[t] = (*lines)[t + 1];
 			(*lines_cnt)--;
 			--i;
@@ -93,7 +100,7 @@ void filter_severity_facility(char*** lines, unsigned int* lines_cnt) {
 		mem_set(log_level_str, 0, 25); // Reset the string after use
 
 		if (severity > kmesglobal.min_severity || facility > kmesglobal.min_facility) {
-			free((*lines)[i]);
+			SAFE_FREE((*lines)[i]);
 			for (unsigned int t = i; t < *lines_cnt - 1; ++t) (*lines)[t] = (*lines)[t + 1];
 			(*lines_cnt)--;
 			--i;
@@ -105,13 +112,9 @@ void filter_severity_facility(char*** lines, unsigned int* lines_cnt) {
 	return;
 }
 
-bool print_line(char* str_line) {
-	// Line example "<log_level_num> [timestamp] info..."
-	unsigned int len = str_len(str_line);
-	unsigned int str_pos = 1;
-
+int get_log_level_and_severity(char* str_line, unsigned int len, unsigned int* str_pos, unsigned int* log_level, unsigned int* severity) {
 	// Extract the log level is composed by severity and facility (combined value = (facility x 8) + severity), in this way we can filter messages by facility and severity
-	long long int log_level_end_pos = find_chr(str_line + str_pos, len - str_pos, '>');
+	long long int log_level_end_pos = find_chr(str_line + *str_pos, len - *str_pos, '>');
 	if (log_level_end_pos < 0) {
 		KMESG_ERR("invalid string format: '%s'.\n", str_line);
 		return FALSE;
@@ -123,79 +126,118 @@ bool print_line(char* str_line) {
 	   return FALSE;
 	}
 
-	mem_cpy(log_level_str, str_line + str_pos, log_level_end_pos);
+	mem_cpy(log_level_str, str_line + *str_pos, log_level_end_pos);
 	log_level_str[log_level_end_pos] = '\0';
-	str_pos += log_level_end_pos + 1;
+	*str_pos += log_level_end_pos + 1;
 
-	unsigned int log_level = str_to_int(log_level_str);
-	unsigned int severity = log_level % 8;
-	free(log_level_str);
+	*log_level = str_to_int(log_level_str);
+	*severity = *log_level % 8;
+	SAFE_FREE(log_level_str);
+	
+	return TRUE;
+}
 
+int get_timestamp_and_identifier(char* str_line, unsigned int len, unsigned int* str_pos, char** timestamp, char** module_identifier) {
 	// Extract the timestamp
-	long long int timestamp_end_pos = find_chr(str_line + str_pos, len - str_pos, ']');
+	long long int timestamp_end_pos = find_chr(str_line + *str_pos, len - *str_pos, ']');
 	if (timestamp_end_pos < 0) {
 		KMESG_ERR("invalid string format: '%s'.\n", str_line);
 		return FALSE;
 	} 
 
-	char* timestamp = (char*) calloc(timestamp_end_pos + 2, sizeof(char));
-	if (timestamp == NULL) {
+	*timestamp = (char*) calloc(timestamp_end_pos + 2, sizeof(char));
+	if (*timestamp == NULL) {
 		KMESG_ERR("failed to allocate the timestamp buff.\n");
 		return FALSE;
 	}
-
-	mem_cpy(timestamp, str_line + str_pos, timestamp_end_pos + 1);
-	timestamp[timestamp_end_pos + 1] = '\0';
-	str_pos += timestamp_end_pos + 1;
+	
+	mem_cpy(*timestamp, str_line + *str_pos, timestamp_end_pos + 1);
+	(*timestamp)[timestamp_end_pos + 1] = '\0';
+	*str_pos += timestamp_end_pos + 1;
 
 	// Extract the module defined identifier, we check for the pos of the column (like "MODULE-NAME_LOG-LEVEL: ...")
-	long long int column_ref = find_chr(str_line + str_pos, len - str_pos, ':');
+	long long int column_ref = find_chr(str_line + *str_pos, len - *str_pos, ':');
 	// Print the rest if the identifier is not present
-	if (column_ref < 0) {
-		printf(TIMESTAMP_COLOR "%s" RESET_COLOR "%s\n", timestamp, (str_line + str_pos));
-		free(timestamp);
-		return TRUE;
-	}
+	if (column_ref < 0) return FALSE;
 	
-	char* module_identifier = (char*) calloc(column_ref + 2, sizeof(char)); 
+	*module_identifier = (char*) calloc(column_ref + 2, sizeof(char)); 
 	if (module_identifier == NULL) {
-		free(timestamp);
+		SAFE_FREE(*timestamp);
 		KMESG_ERR("failed to allocate module_identifier.\n");
 		return FALSE;
 	}
 
-	mem_cpy(module_identifier, str_line + str_pos, column_ref + 1);
-	module_identifier[column_ref + 1] = '\0';
-	str_pos += column_ref + 1;
-
-	if (kmesglobal.flag_modes & DISABLE_COLORS) printf(RESET_COLOR "%s%s%s\n", timestamp, module_identifier, (str_line + str_pos));
-	else printf(TIMESTAMP_COLOR "%s" RESET_COLOR "%s%s" RESET_COLOR "%s\n", timestamp, log_level_colors[severity], module_identifier, (str_line + str_pos));
+	mem_cpy(*module_identifier, str_line + *str_pos, column_ref + 1);
+	(*module_identifier)[column_ref + 1] = '\0';
+	*str_pos += column_ref + 1;
 	
-	if ((kmesglobal.flag_modes & DUMP_KMESG) && kmesglobal.dump_file != NULL) {
-		// Check if the timestamp offset matches
-		bool matches_offset = str_n_cmp(timestamp + 2, kmesglobal.dump_offset, str_len(kmesglobal.dump_offset)) == 0;
-		if (*kmesglobal.dump_offset != '\0' && matches_offset) {
-			*kmesglobal.dump_offset = '\0';
-		} else if (*kmesglobal.dump_offset != '\0' && !matches_offset) {
-			free(timestamp);
-			free(module_identifier);
-			return TRUE;
-		}
-		
-		int line_size = 0;
-		char line[MAX_DUMP_LINE_SIZE] = {0};
-		if (kmesglobal.flag_modes & DISABLE_COLORS) line_size = snprintf(line, MAX_DUMP_LINE_SIZE, RESET_COLOR "%s%s%s\n", timestamp, module_identifier, (str_line + str_pos));
-		else line_size = snprintf(line, MAX_DUMP_LINE_SIZE, TIMESTAMP_COLOR "%s" RESET_COLOR "%s%s" RESET_COLOR "%s\n", timestamp, log_level_colors[severity], module_identifier, (str_line + str_pos));
-		
-		if (fwrite(line, sizeof(char), line_size, kmesglobal.dump_file) != (size_t) line_size) {
-			kmesg_perror("Failed to save the data to the dump file, because: ");
-			fclose(kmesglobal.dump_file);
-			kmesglobal.dump_file = NULL;
-		}
+	return TRUE;
+}
+
+void dump_line(char* str_line, char* timestamp, char* module_identifier, unsigned int str_pos, unsigned int severity) {
+	// Check if the timestamp offset matches
+	bool matches_offset = str_n_cmp(timestamp + 2, kmesglobal.dump_offset, str_len(kmesglobal.dump_offset)) == 0;
+	if (*kmesglobal.dump_offset != '\0' && matches_offset) {
+		*kmesglobal.dump_offset = '\0';
+	} else if (*kmesglobal.dump_offset != '\0' && !matches_offset) {
+		SAFE_FREE(timestamp);
+		SAFE_FREE(module_identifier);
+		return;
+	}
+	
+	int line_size = 0;
+	char line[MAX_DUMP_LINE_SIZE] = {0};
+	
+	if (kmesglobal.flag_modes & DISABLE_COLORS) {
+		if (module_identifier != NULL) line_size = snprintf(line, MAX_DUMP_LINE_SIZE, RESET_COLOR "%s%s%s\n", timestamp, module_identifier, (str_line + str_pos));
+		else line_size = snprintf(line, MAX_DUMP_LINE_SIZE, RESET_COLOR "%s" RESET_COLOR "%s\n", timestamp, (str_line + str_pos));
+	} else {
+		if (module_identifier != NULL) line_size = snprintf(line, MAX_DUMP_LINE_SIZE, TIMESTAMP_COLOR "%s" RESET_COLOR "%s%s" RESET_COLOR "%s\n", timestamp, log_level_colors[severity], module_identifier, (str_line + str_pos));
+		else line_size = snprintf(line, MAX_DUMP_LINE_SIZE, TIMESTAMP_COLOR "%s" RESET_COLOR "%s\n", timestamp, (str_line + str_pos));
+	}
+	
+	if (fwrite(line, sizeof(char), line_size, kmesglobal.dump_file) != (size_t) line_size) {
+		kmesg_perror("Failed to save the data to the dump file, because: ");
+		fclose(kmesglobal.dump_file);
+		kmesglobal.dump_file = NULL;
 	}
 
-	free(timestamp);
-	free(module_identifier);
+	return;
+}
+
+bool print_line(char* str_line) {
+	// Line example "<log_level_num> [timestamp] info..."
+	unsigned int len = str_len(str_line);
+	unsigned int str_pos = 1;
+	
+	unsigned int log_level = 0;
+	unsigned int severity = 0;
+	if (!get_log_level_and_severity(str_line, len, &str_pos, &log_level, &severity)) {
+		KMESG_ERR("Failed to retrieve log level and severity.\n");
+		return FALSE;
+	}
+	
+	char* timestamp = NULL;
+	char* module_identifier = NULL;
+	if (!get_timestamp_and_identifier(str_line, len, &str_pos, &timestamp, &module_identifier)) {
+		KMESG_ERR("Failed to retrieve timestamp and module identifier.\n");
+		return FALSE;
+	}
+	
+	if (kmesglobal.flag_modes & DISABLE_COLORS) {
+		if (module_identifier != NULL) printf(RESET_COLOR "%s%s%s\n", timestamp, module_identifier, (str_line + str_pos));
+		else printf(RESET_COLOR "%s" RESET_COLOR "%s\n", timestamp, (str_line + str_pos));
+	} else {
+		if (module_identifier != NULL) printf(TIMESTAMP_COLOR "%s" RESET_COLOR "%s%s" RESET_COLOR "%s\n", timestamp, log_level_colors[severity], module_identifier, (str_line + str_pos));
+		else printf(TIMESTAMP_COLOR "%s" RESET_COLOR "%s\n", timestamp, (str_line + str_pos));
+	}
+
+	if ((kmesglobal.flag_modes & DUMP_KMESG) && kmesglobal.dump_file != NULL) {
+		dump_line(str_line, timestamp, module_identifier, str_pos, severity);
+	}
+	
+	SAFE_FREE(timestamp);
+	SAFE_FREE(module_identifier);
 
 	return TRUE;
 }
@@ -347,8 +389,8 @@ void print_kmsg(char* kmesg, unsigned int len) {
 	
 	if ((kmesglobal.flag_modes & DUMP_KMESG) && kmesglobal.dump_file != NULL) fclose(kmesglobal.dump_file);
 
-	for (unsigned int i = 0; i < lines_cnt; ++i) free(lines[i]);
-	free(lines);
+	for (unsigned int i = 0; i < lines_cnt; ++i) SAFE_FREE(lines[i]);
+	SAFE_FREE(lines);
 	
 	return;
 }
@@ -508,29 +550,7 @@ void read_flag(char* flag_arg) {
 	return;
 }
 
-int main(int argc, char* argv[]) {
-	if (argc > 1) {
-		unsigned int arg_cnt = 0;
-		argc--;
-		while (arg_cnt++, argc--) {
-			read_flag(argv[arg_cnt]);
-			if (kmesglobal.mod_func == INVALID_FLAG) return -1;
-		}
-	}
-
-	if (kmesglobal.mod_func == HELPER) {
-		print_helper();
-		return 0;
-	} else if (kmesglobal.mod_func == COLOR_DEMO) {
-		print_color_demo();
-		return 0;
-	} else if (kmesglobal.mod_func == LIST_LEVELS) {
-		print_list_levels();
-		return 0;
-	}
-
-	if (!kmesglobal.mod_func) kmesglobal.mod_func = READ_ALL;
-
+int exec_mod_func(void) {
 	if (kmesglobal.mod_func == READ || kmesglobal.mod_func == READ_ALL || kmesglobal.mod_func == READ_CLEAR || kmesglobal.mod_func == READ_UNREAD) {
 		if (!kmesglobal.kern_msg_buf_size && (kmesglobal.mod_func == READ_ALL || kmesglobal.mod_func == READ_CLEAR)) {
 			if ((kmesglobal.kern_msg_buf_size = klogctl(SIZE_BUFFER, NULL, 0)) < 0) {
@@ -556,13 +576,13 @@ int main(int argc, char* argv[]) {
 
 		int ret = 0;
 		if ((ret = klogctl(kmesglobal.mod_func, msg_buff, kmesglobal.kern_msg_buf_size)) < 0) {
-			free(msg_buff);
+			SAFE_FREE(msg_buff);
 			kmesg_perror("failed to execute the function: " CRITICAL_COLOR "%s" RESET_COLOR ", because: ", mod_func_names[kmesglobal.mod_func]);
 			return -1;
 		}
 
 		print_kmsg(msg_buff, ret);
-		free(msg_buff);
+		SAFE_FREE(msg_buff);
 		if (kmesglobal.flag_modes & LESS_MODE) printf("\033[?1049l"); // Restore the primary screen buffer
 
 	} else if (kmesglobal.mod_func == CLEAR || kmesglobal.mod_func == CONSOLE_ON || kmesglobal.mod_func == CONSOLE_OFF || kmesglobal.mod_func == SIZE_UNREAD || kmesglobal.mod_func == CONSOLE_LEVEL) {
@@ -581,5 +601,26 @@ int main(int argc, char* argv[]) {
 	} else if (kmesglobal.mod_func == COLOR_DEMO) print_color_demo();
 
 	return 0;
+}
+
+int main(int argc, char* argv[]) {
+	if (argc > 1) {
+		unsigned int arg_cnt = 0;
+		argc--;
+		while (arg_cnt++, argc--) {
+			read_flag(argv[arg_cnt]);
+			if (kmesglobal.mod_func == INVALID_FLAG) return -1;
+		}
+	}
+
+	if (!kmesglobal.mod_func) kmesglobal.mod_func = READ_ALL;
+	
+	int err = 0;
+	if (kmesglobal.mod_func == HELPER) print_helper();
+	else if (kmesglobal.mod_func == COLOR_DEMO) print_color_demo();
+	else if (kmesglobal.mod_func == LIST_LEVELS) print_list_levels();
+	else err = exec_mod_func();
+
+   	return err;
 }
 

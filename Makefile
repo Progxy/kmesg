@@ -1,4 +1,4 @@
-FLAGS = -std=gnu11 -Wall -Wextra -pedantic
+FLAGS = -std=gnu11 -ggdb -Wall -Wextra -pedantic
 
 all: kmesg
 
@@ -7,9 +7,6 @@ install: kmesg
 
 kmesg: kmesg.c
 	gcc $(FLAGS) -lncurses $< -o $@
-
-debug: kmesg.c
-	gcc $(FLAGS) -ggdb -lncurses $< -o kmesg
 
 clean:
 	rm -rf kmesg

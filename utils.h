@@ -18,6 +18,8 @@
 #ifndef _KMESG_UTILS_H_
 #define _KMESG_UTILS_H_
 
+// TODO: Should refactor some code, and add a bit of style also to the following.
+
 typedef unsigned char bool;
 
 #define MAX_DUMP_FILE_PATH_SIZE 512
@@ -32,6 +34,8 @@ typedef unsigned char bool;
 #define IS_A_VAL(chr)   (((chr) >= 48) && ((chr) <= 57))
 #define MAX(a, b)       ((a) > (b) ? (a) : (b)) 
 #define MIN(a, b)       ((a) < (b) ? (a) : (b)) 
+
+#define SAFE_FREE(ptr) do { if ((ptr) != NULL) free(ptr), (ptr) = NULL; } while(0)
 
 // Define log levels as an enum
 typedef enum LogLevels {
