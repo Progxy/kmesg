@@ -25,7 +25,7 @@
 #include <string.h>
 #include "./utils.h"
 
-// TODO: Should probably refactor the code.
+/* -------------------------------------------------------------------------------------------------------- */
 // ------------------ 
 //  Static Variables
 // ------------------ 
@@ -95,8 +95,8 @@ void filter_severity_facility(char*** lines, unsigned int* lines_cnt) {
 		log_level_str[log_level_end_pos] = '\0';
 
 		unsigned int log_level = str_to_int(log_level_str);
-		unsigned int facility = log_level / 8;
-		unsigned int severity = log_level % 8;
+		int facility = log_level / 8;
+		int severity = log_level % 8;
 		mem_set(log_level_str, 0, 25); // Reset the string after use
 
 		if (severity > kmesglobal.min_severity || facility > kmesglobal.min_facility) {
@@ -158,7 +158,7 @@ int get_timestamp_and_identifier(char* str_line, unsigned int len, unsigned int*
 	// Extract the module defined identifier, we check for the pos of the column (like "MODULE-NAME_LOG-LEVEL: ...")
 	long long int column_ref = find_chr(str_line + *str_pos, len - *str_pos, ':');
 	// Print the rest if the identifier is not present
-	if (column_ref < 0) return FALSE;
+	if (column_ref < 0) return TRUE;
 	
 	*module_identifier = (char*) calloc(column_ref + 2, sizeof(char)); 
 	if (module_identifier == NULL) {
@@ -285,7 +285,15 @@ bool print_screen(char* clear_cmd, long long int start_line, unsigned int term_h
 	return TRUE;
 }
 
-// TODO: Should most probably add the search function within -cl
+void echo_char(char c) {
+	if (c == 127 || c == 8) printf("\b \b");
+	else printf("%c", c);
+	fflush(stdout);
+	return;
+}
+
+// TODO: Should most probably either just decompose the following function, or even better give it a dedicated file, with the other termios operations
+// TODO: Should most probably add the search function 
 void print_less(char** lines, long long int lines_cnt) {
 	// Load termcap and enable raw mode
     char term_buffer[2048] = {0};
@@ -300,7 +308,7 @@ void print_less(char** lines, long long int lines_cnt) {
 	if (!print_screen(clear_cmd, start_line, term_height, lines, lines_cnt, original_settings)) return;
 	
 	char c = 0;
-	char buf[12];
+	char buf[12] = {0};
 	unsigned char buf_index = 0;
 	while (read(STDIN_FILENO, &c, 1) == 1) {
 		if (c == 'q') break;
@@ -316,7 +324,7 @@ void print_less(char** lines, long long int lines_cnt) {
 			start_line = MAX(start_line, -term_height + 1);
 		}
 		else if (c == '\033') {
-			char seq[3];
+			char seq[3] = {0};
 			if (read(STDIN_FILENO, &seq[0], 1) == 0) break;
 			if (read(STDIN_FILENO, &seq[1], 1) == 0) break;
 			
@@ -325,17 +333,23 @@ void print_less(char** lines, long long int lines_cnt) {
 				else if ((seq[1] == 'B') && (start_line < lines_cnt - term_height)) start_line++;
 			}
 		} else if (IS_A_VAL(c)) {
+			echo_char(c);
 			buf[buf_index] = c;
 			buf_index++;
-
+			
 			while(read(STDIN_FILENO, &c, 1) == 1) {
+				echo_char(c);
+			   	if (c == '\n') break;
 				if (IS_A_VAL(c)) {
 					// Shift the chars inside the buffer left
 					if (buf_index == 11) mem_cpy(buf, buf + 1, 11);
 					buf[buf_index] = c;
 					buf_index = (buf_index + 1) % 12;
-					continue;
-				} else if (c == '\n') break;
+				} else if (c == 127 || c == 8) {
+					if (buf_index > 0) {
+						buf[--buf_index] = '\0';
+					}
+				}
 			}
 
 			if (buf_index) {
@@ -422,43 +436,82 @@ void print_list_levels(void) {
 }
 
 void print_helper(void) {
-	printf("Usage: kmesg [-flag[=val]].\n");
+	printf("Usage: kmesg [--flag[=val]].\n");
 	printf("Those are the flags available:\n");
-	printf("\t-C:  Clear the kernel ring buffer\n");
-	printf("\t-R:  Await until the kernel log buffer is nonempty, and then read at most 'len' bytes, where 'len' is the value passed after the flag, otherwise the default value '%u'.\n", DEFAULT_MSG_BUF_SIZE);
-	printf("\t-u:  Return the number of bytes currently available to be read from the kernel log buffer.\n");
-	printf("\t-d:  Print the color demo, to show the color palette used for each log level.\n");
-	printf("\t-ra: This is the default behaviour used by KMESG. Read all messages remaining in the ring buffer. If a value is passed after the flag, reads the last 'val' bytes from the log buffer.\n");
-	printf("\t-rc: Read and clear all messages remaining in the ring buffer. If a value is passed after the flag, reads the last 'val' bytes from the log buffer.\n");
-	printf("\t-ru: Read the messages that have not been read. It is similar to executing -r with -u returned bytes len.\n");
-	printf("\t-rv: Print in reverse.\n");
-	printf("\t-ce: Set the console log level to the default, so that messages are printed to the console.\n");
-	printf("\t-cd: Set the console log level to the minimum, so that no messages are printed to the console.\n");
-	printf("\t-cl: Print using a 'less' mode, the following commands apply only to the less mode:\n");
-	printf("\t\tq: Exit.\n");
-	printf("\t\tg: Go to the beginning, alternatively can be used '<'.\n");
-	printf("\t\tG: Go to the end, alternatively can be used '>'.\n");
-	printf("\t\tj: Scroll down one line, alternatively can be used the 'arrow down'.\n");
-	printf("\t\tk: Scroll up one line, alternatively can be used the 'arrow up'.\n");
+	printf("\t--C:  Clear the kernel ring buffer\n");
+	printf("\t--R:  Await until the kernel log buffer is nonempty, and then read at most 'len' bytes, where 'len' is the value passed after the flag, otherwise the default value '%u'.\n", DEFAULT_MSG_BUF_SIZE);
+	printf("\t--u:  Return the number of bytes currently available to be read from the kernel log buffer.\n");
+	printf("\t--d:  Print the color demo, to show the color palette used for each log level.\n");
+	printf("\t--ra: This is the default behaviour used by KMESG. Read all messages remaining in the ring buffer. If a value is passed after the flag, reads the last 'val' bytes from the log buffer.\n");
+	printf("\t--rc: Read and clear all messages remaining in the ring buffer. If a value is passed after the flag, reads the last 'val' bytes from the log buffer.\n");
+	printf("\t--ru: Read the messages that have not been read. It is similar to executing -r with -u returned bytes len.\n");
+	printf("\t--rv: Print in reverse.\n");
+	printf("\t--ce: Set the console log level to the default, so that messages are printed to the console.\n");
+	printf("\t--cd: Set the console log level to the minimum, so that no messages are printed to the console.\n");
+	printf("\t--cl: Print using a 'less' mode, the following commands apply only to the less mode:\n");
+	printf("\t\tq:     Exit.\n");
+	printf("\t\tg:     Go to the beginning, alternatively can be used '<'.\n");
+	printf("\t\tG:     Go to the end, alternatively can be used '>'.\n");
+	printf("\t\tj:     Scroll down one line, alternatively can be used the 'arrow down'.\n");
+	printf("\t\tk:     Scroll up one line, alternatively can be used the 'arrow up'.\n");
 	printf("\t\tSpace: Scroll down one screen.\n");
-	printf("\t\tb: Scroll up one screen.\n");
-	printf("\t\t[numbers]-Enter: Navigate to the specified line (max 12 digits). Exceeding 12 shifts input left to make space for the new digit.\n");
-	printf("\t-L:  Set the console log level to the value passed after the flag, which must be an integer between 1 and 8 (inclusive).\n");
-	printf("\t-s:  Set the MIN_SEVERITY using the value passed after the flag. The default value is '%s'.\n", severities_names[kmesglobal.min_severity]);
-	printf("\t-f:  Set the MIN_FACILITY using the value passed after the flag. The default value is '%s'.\n", facilities_names[kmesglobal.min_facility]);
-	printf("\t-l:  List SEVERITY levels and FACILITY levels.\n");
+	printf("\t\tb:     Scroll up one screen.\n");
+	printf("\t\t[number]-Enter: Navigate to the specified line (max 12 digits). Exceeding 12 shifts input left to make space for the new digit.\n");
+	printf("\t--L:  Set the console log level to the value passed after the flag, which must be an integer between 1 and 8 (inclusive).\n");
+	printf("\t--s:  Set the MIN_SEVERITY using the value passed after the flag. The default value is '%s'.\n", severities_names[kmesglobal.min_severity]);
+	printf("\t--f:  Set the MIN_FACILITY using the value passed after the flag. The default value is '%s'.\n", facilities_names[kmesglobal.min_facility]);
+	printf("\t--l:  List SEVERITY levels and FACILITY levels.\n");
 	printf("\t--dump: Dump the content of the kernel ring buffer into the specified file, as --dump=file_path.\n");
 	printf("\t--dump-offset: Set the timestamp offset from which the content will be dumped, as --dump-offset=0.12.\n");
 	printf("\t--no-color: print in old fashioned black & white.\n");
-	printf("\t-h:  Show this page.\n");
+	printf("\t--h:  Show this page.\n");
 	printf("\n" KMESG_COLOR "KMESG: " DEBUG_COLOR "A colored alternative to " NOTICE_COLOR "dmesg" WARNING_COLOR ", by" KMESG_COLOR " \'TheProgxy\'" RESET_COLOR ", (" KMESG_COLOR "KMESG_VERSION: " TIMESTAMP_COLOR KMESG_VERSION RESET_COLOR").\n");
 	return; 
 }
 
-// TODO: Should both replace the flag matching technique, as well as using '--' instead of '-' and full flag name when needed for clarity
+void check_mod_func_flag(char* flag_arg) {
+	if (str_n_cmp(flag_arg, "--d", 3) == 0) kmesglobal.mod_func = COLOR_DEMO;
+	else if (str_n_cmp(flag_arg, "--l", 3) == 0) kmesglobal.mod_func = LIST_LEVELS;
+	else if (str_n_cmp(flag_arg, "--C", 3) == 0) kmesglobal.mod_func = CLEAR; 
+	else if (str_n_cmp(flag_arg, "--u", 3) == 0) kmesglobal.mod_func = SIZE_UNREAD; 
+	else if (str_n_cmp(flag_arg, "--ru", 4) == 0) kmesglobal.mod_func = READ_UNREAD;
+	else if (str_n_cmp(flag_arg, "--ce", 4) == 0) kmesglobal.mod_func = CONSOLE_ON;
+	else if (str_n_cmp(flag_arg, "--cd", 4) == 0) kmesglobal.mod_func = CONSOLE_OFF;
+	
+	if (kmesglobal.mod_func) return;
+
+	int offset = 4;
+	if (str_n_cmp(flag_arg, "--R=", 4) == 0) kmesglobal.mod_func = READ;
+	else if (str_n_cmp(flag_arg, "--L=", 4) == 0) kmesglobal.mod_func = CONSOLE_LEVEL;
+	else if (str_n_cmp(flag_arg, "--ra=", 5) == 0) kmesglobal.mod_func = READ_ALL, offset++;
+	else if (str_n_cmp(flag_arg, "--rc=", 5) == 0) kmesglobal.mod_func = READ_CLEAR, offset++;
+	else {
+		kmesglobal.mod_func = INVALID_FLAG;
+		KMESG_ERR("invalid flag: '%s'.\n", flag_arg);
+		return;
+	}
+	
+	if (kmesglobal.mod_func == READ || kmesglobal.mod_func == READ_ALL || kmesglobal.mod_func == READ_CLEAR) {
+		if ((kmesglobal.kern_msg_buf_size = str_to_int(flag_arg + offset)) < 0) {
+			kmesglobal.mod_func = INVALID_FLAG;
+			return;
+		}
+	} else if (kmesglobal.mod_func == CONSOLE_LEVEL) {
+		if ((kmesglobal.log_level = str_to_int(flag_arg + offset)) < 0) {
+			kmesglobal.mod_func = INVALID_FLAG;
+			return;
+		} else if (kmesglobal.log_level > 8 || kmesglobal.log_level < 1) {
+			kmesglobal.mod_func = INVALID_FLAG;
+			KMESG_ERR("invalid log level: %d, log levels must be in interval [1..8].\n", kmesglobal.log_level);
+			return;
+		}
+	} 
+	
+	return;
+}
+
 void read_flag(char* flag_arg) {
 	unsigned int arg_len = str_len(flag_arg);
-	
 	if (str_cmp(flag_arg, "--no-color") == 0) {
 		kmesglobal.flag_modes |= DISABLE_COLORS;
 		return;
@@ -469,84 +522,30 @@ void read_flag(char* flag_arg) {
 	} else if (str_n_cmp(flag_arg, "--dump-offset=", 14) == 0) {
 		mem_cpy(kmesglobal.dump_offset, flag_arg + 14, MIN(MAX_DUMP_OFFSET_LEN, arg_len - 14));
 		return;
-	}
-	
-	unsigned int internal_func = 0;
-	if (!kmesglobal.mod_func) {
-		if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'C') kmesglobal.mod_func = CLEAR; 
-		else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'R') kmesglobal.mod_func = READ;
-		else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'u') kmesglobal.mod_func = SIZE_UNREAD; 
-		else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'd') kmesglobal.mod_func = COLOR_DEMO;
-		else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'r' && flag_arg[2] == 'a') kmesglobal.mod_func = READ_ALL;
-		else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'r' && flag_arg[2] == 'c') kmesglobal.mod_func = READ_CLEAR;
-		else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'r' && flag_arg[2] == 'u') kmesglobal.mod_func = READ_UNREAD;
-		else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'r' && flag_arg[2] == 'v') { 
-			kmesglobal.flag_modes |= REVERSE_MODE;
-			return;
-		} else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'c' && flag_arg[2] == 'e') kmesglobal.mod_func = CONSOLE_ON;
-		else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'c' && flag_arg[2] == 'd') kmesglobal.mod_func = CONSOLE_OFF;
-		else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'c' && flag_arg[2] == 'l') { 
-			kmesglobal.flag_modes |= LESS_MODE;
-		} else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'L') kmesglobal.mod_func = CONSOLE_LEVEL;
-		else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'l') kmesglobal.mod_func = LIST_LEVELS;
-		else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 's') internal_func = SET_MIN_SEVERITY;
-		else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'f') internal_func = SET_MIN_FACILITY;
-		else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'h') kmesglobal.mod_func = HELPER;
-		else {
-			kmesglobal.mod_func = INVALID_FLAG;
-			KMESG_ERR("invalid flag: '%s'.\n", flag_arg);
-			return;
-		}
-	} else {
-		if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 's') internal_func = SET_MIN_SEVERITY;
-		else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'f') internal_func = SET_MIN_FACILITY;
-		else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'h') kmesglobal.mod_func = HELPER;
-		else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'r' && flag_arg[2] == 'v') kmesglobal.flag_modes |= REVERSE_MODE;
-		else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'c' && flag_arg[2] == 'l') kmesglobal.flag_modes |= LESS_MODE;
-		else {
-			kmesglobal.mod_func = INVALID_FLAG;
-			KMESG_ERR("invalid flag: '%s'.\n", flag_arg);
-			return;
-		}
-	}
-
-	if (kmesglobal.mod_func == HELPER || kmesglobal.mod_func == LIST_LEVELS || kmesglobal.mod_func == COLOR_DEMO) return;
-
-	if (internal_func) {
-		long long int value_pos = find_chr(flag_arg, arg_len, '=');
-		if (value_pos < 0) return;
-		int value = str_to_int(flag_arg + value_pos + 1);
-		if (value < 0) {
-			kmesglobal.mod_func = INVALID_FLAG;
-			return;
-		}
-		if (internal_func == SET_MIN_SEVERITY) kmesglobal.min_severity = value;
-		else kmesglobal.min_facility = value;
+	} else if (str_n_cmp(flag_arg, "--s=", 4) == 0) {
+		if ((kmesglobal.min_severity = str_to_int(flag_arg + 4)) < 0) kmesglobal.mod_func = INVALID_FLAG;
+		return;
+	} else if (str_n_cmp(flag_arg, "--f=", 4) == 0) {
+		if ((kmesglobal.min_facility = str_to_int(flag_arg + 4)) < 0) kmesglobal.mod_func = INVALID_FLAG;
+		return;
+	} else if (str_n_cmp(flag_arg, "--h", 3) == 0) {
+		kmesglobal.mod_func = HELPER;
+		return;
+	} else if (str_n_cmp(flag_arg, "--rv", 4) == 0) {
+		kmesglobal.flag_modes |= REVERSE_MODE;
+		return;
+	} else if (str_n_cmp(flag_arg, "--cl", 4) == 0) {
+		kmesglobal.flag_modes |= LESS_MODE;
 		return;
 	}
 
-	if (kmesglobal.mod_func == READ || kmesglobal.mod_func == READ_ALL || kmesglobal.mod_func == READ_CLEAR) {
-		long long int value_pos = find_chr(flag_arg, arg_len, '=');
-		if (value_pos < 0) return;
-		kmesglobal.kern_msg_buf_size = str_to_int(flag_arg + value_pos + 1);
-		if (kmesglobal.kern_msg_buf_size < 0) {
-			kmesglobal.mod_func = INVALID_FLAG;
-			return;
-		}
-	} else if (kmesglobal.mod_func == CONSOLE_LEVEL) {
-		long long int value_pos = find_chr(flag_arg, arg_len, '=');
-		if (value_pos < 0) return;
-		kmesglobal.log_level = str_to_int(flag_arg + value_pos + 1);
-		if (kmesglobal.log_level < 0) {
-			kmesglobal.mod_func = INVALID_FLAG;
-			return;
-		} else if (kmesglobal.log_level > 8 || kmesglobal.log_level < 1) {
-			kmesglobal.mod_func = INVALID_FLAG;
-			KMESG_ERR("invalid log level: %d, log levels must be in interval [1..8].\n", kmesglobal.log_level);
-			return;
-		}
-	} 
-	
+	if (!kmesglobal.mod_func) check_mod_func_flag(flag_arg);
+	else {
+		kmesglobal.mod_func = INVALID_FLAG;
+		KMESG_ERR("invalid flag: '%s'.\n", flag_arg);
+		return;
+	}
+
 	return;
 }
 

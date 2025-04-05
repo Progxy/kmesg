@@ -125,8 +125,8 @@ typedef enum FlagModes {
 } FlagModes;
 
 typedef struct KMESGlobal {
-	unsigned int min_severity;
-	unsigned int min_facility;
+	int min_severity;
+	int min_facility;
 	unsigned char mod_func;
 	int kern_msg_buf_size;
 	int log_level;
