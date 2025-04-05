@@ -28,6 +28,7 @@ typedef unsigned char bool;
 
 #define MAX_DUMP_FILE_PATH_SIZE 512
 #define DEFAULT_MSG_BUF_SIZE    8192
+#define MAX_DUMP_OFFSET_LEN     20
 #define MAX_DUMP_LINE_SIZE      512
 
 #define FALSE 0
@@ -132,6 +133,7 @@ static bool disable_colors = TRUE;
 static bool dump_kmesg = FALSE;
 static char dump_file_path[MAX_DUMP_FILE_PATH_SIZE] = {0};
 static FILE* dump_file = NULL;
+static char dump_offset[MAX_DUMP_OFFSET_LEN] = {0};
 
 unsigned int str_len(const char* str) {
 	if (str == NULL) return 0;
@@ -356,10 +358,21 @@ bool print_line(char* str_line) {
 	else printf(TIMESTAMP_COLOR "%s" RESET_COLOR "%s%s" RESET_COLOR "%s\n", timestamp, log_level_colors[severity], module_identifier, (str_line + str_pos));
 	
 	if (dump_kmesg && dump_file != NULL) {
-		char line[MAX_DUMP_LINE_SIZE] = {0};
+		// Check if the timestamp offset matches
+		bool matches_offset = str_n_cmp(timestamp + 2, dump_offset, str_len(dump_offset)) == 0;
+		if (*dump_offset != '\0' && matches_offset) {
+			*dump_offset = '\0';
+		} else if (*dump_offset != '\0' && !matches_offset) {
+			free(timestamp);
+			free(module_identifier);
+			return TRUE;
+		}
+		
 		int line_size = 0;
+		char line[MAX_DUMP_LINE_SIZE] = {0};
 		if (disable_colors) line_size = snprintf(line, MAX_DUMP_LINE_SIZE, RESET_COLOR "%s%s%s\n", timestamp, module_identifier, (str_line + str_pos));
 		else line_size = snprintf(line, MAX_DUMP_LINE_SIZE, TIMESTAMP_COLOR "%s" RESET_COLOR "%s%s" RESET_COLOR "%s\n", timestamp, log_level_colors[severity], module_identifier, (str_line + str_pos));
+		
 		if (fwrite(line, sizeof(char), line_size, dump_file) != (size_t) line_size) {
 			kmesg_perror("Failed to save the data to the dump file, because: ");
 			fclose(dump_file);
@@ -416,6 +429,7 @@ bool print_screen(char* clear_cmd, long long int start_line, unsigned int term_h
 	return TRUE;
 }
 
+// TODO: Should most probably add the search function within -cl
 void print_less(char** lines, long long int lines_cnt) {
 	// Load termcap and enable raw mode
     char term_buffer[2048] = {0};
@@ -517,7 +531,6 @@ void print_kmsg(char* kmesg, unsigned int len) {
 		for (unsigned int i = 0; i < lines_cnt; ++i) print_line(lines[i]);
 	}
 	
-	// TODO: Should maybe fix the file ownership problem	
 	if (dump_kmesg && dump_file != NULL) fclose(dump_file);
 
 	for (unsigned int i = 0; i < lines_cnt; ++i) free(lines[i]);
@@ -579,6 +592,7 @@ void print_helper(void) {
 	printf("\t-f:  Set the MIN_FACILITY using the value passed after the flag. The default value is '%s'.\n", facilities_names[min_facility]);
 	printf("\t-l:  List SEVERITY levels and FACILITY levels.\n");
 	printf("\t--dump: Dump the content of the kernel ring buffer into the specified file, as --dump=file_path.\n");
+	printf("\t--dump-offset: Set the timestamp offset from which the content will be dumped, as --dump-offset=0.12.\n");
 	printf("\t--no-color: print in old fashioned black & white.\n");
 	printf("\t-h:  Show this page.\n");
 	printf("\n" KMESG_COLOR "KMESG: " DEBUG_COLOR "A colored alternative to " NOTICE_COLOR "dmesg" WARNING_COLOR ", by" KMESG_COLOR " \'TheProgxy\'" RESET_COLOR ", (" KMESG_COLOR "KMESG_VERSION: " TIMESTAMP_COLOR KMESG_VERSION RESET_COLOR").\n");
@@ -596,7 +610,11 @@ void read_flag(char* flag_arg) {
 		dump_kmesg = TRUE;
 		mem_cpy(dump_file_path, flag_arg + 7, MIN(MAX_DUMP_FILE_PATH_SIZE, arg_len - 7));
 		return;
+	} else if (str_n_cmp(flag_arg, "--dump-offset=", 14) == 0) {
+		mem_cpy(dump_offset, flag_arg + 14, MIN(MAX_DUMP_OFFSET_LEN, arg_len - 14));
+		return;
 	}
+
 	
 	unsigned int internal_func = 0;
 	if (!mod_func) {
@@ -676,10 +694,6 @@ void read_flag(char* flag_arg) {
 	
 	return;
 }
-
-// TODO: Should most probably add the "dump kernel ring buffer" feature, along with the search function within -cl
-// TODO: Also should add the possibility to set a certain offset for the dump (instead of dumping the entire buffer content), maybe based on timestamp
-// TODO: Furthermore, should also add the option --no-color for both dumping feature and others
 
 int main(int argc, char* argv[]) {
 	if (argc > 1) {
