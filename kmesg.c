@@ -23,207 +23,21 @@
 #include <sys/klog.h>
 #include <errno.h>
 #include <string.h>
-
-typedef unsigned char bool;
-
-#define MAX_DUMP_FILE_PATH_SIZE 512
-#define DEFAULT_MSG_BUF_SIZE    8192
-#define MAX_DUMP_OFFSET_LEN     20
-#define MAX_DUMP_LINE_SIZE      512
-
-#define FALSE 0
-#define TRUE 1
-
-#define CHR_TO_INT(chr) ((int)(chr) - 48)
-#define IS_A_VAL(chr)   (((chr) >= 48) && ((chr) <= 57))
-#define MAX(a, b)       ((a) > (b) ? (a) : (b)) 
-#define MIN(a, b)       ((a) < (b) ? (a) : (b)) 
-
-// Define log levels as an enum
-typedef enum LogLevels {
-    LOG_EMERG,     // Emergency
-    LOG_ALERT,     // Alert
-    LOG_CRIT,      // Critical
-    LOG_ERR,       // Error
-    LOG_WARNING,   // Warning
-    LOG_NOTICE,    // Notice
-    LOG_INFO,      // Info
-    LOG_DEBUG      // Debug
-} LogLevels;
-
-// Define color codes for each log level
-#define RESET_COLOR       "\033[0m"           // Reset to default color
-#define EMERGENCY_COLOR   "\033[38;5;196m"    // Bright red for immediate emergencies
-#define ALERT_COLOR       "\033[38;5;208m"    // Bold orange for high alert
-#define CRITICAL_COLOR    "\033[38;5;160m"    // Deep red for critical issues
-#define ERROR_COLOR       "\033[38;5;197m"    // Brighter red for standard errors
-#define WARNING_COLOR     "\033[38;5;214m"    // Yellow-orange for warnings
-#define NOTICE_COLOR      "\033[38;5;33m"     // Blue for notices
-#define INFO_COLOR        "\033[38;5;37m"     // Green for informational messages
-#define DEBUG_COLOR       "\033[38;5;243m"    // Grey for debug messages
-#define TIMESTAMP_COLOR   "\033[38;5;39m"     // Cyan for timestamps
-#define KMESG_COLOR       "\033[38;5;208m"    // Orange
-
-const char* log_level_colors[] = {
-    EMERGENCY_COLOR,  // LOG_EMERG
-    ALERT_COLOR,      // LOG_ALERT
-    CRITICAL_COLOR,   // LOG_CRIT
-    ERROR_COLOR,      // LOG_ERR
-    WARNING_COLOR,    // LOG_WARNING
-    NOTICE_COLOR,     // LOG_NOTICE
-    INFO_COLOR,       // LOG_INFO
-    DEBUG_COLOR       // LOG_DEBUG
-};
-
-#define KMESG_ERR(fmt, ...)    printf(ERROR_COLOR "KMESG_ERROR" RESET_COLOR "(line: %u):" fmt, __LINE__, ##__VA_ARGS__)
-#define kmesg_perror(fmt, ...) KMESG_ERR(fmt WARNING_COLOR "%s.\n" RESET_COLOR, ##__VA_ARGS__, strerror(errno))
-
-#define KMESG_VERSION "1.2.0"
-
-// Kernel function types
-#define READ          2
-#define READ_ALL      3
-#define READ_CLEAR    4
-#define CLEAR         5
-#define CONSOLE_OFF   6
-#define CONSOLE_ON    7
-#define CONSOLE_LEVEL 8
-#define SIZE_UNREAD   9
-#define SIZE_BUFFER   10
-
-// KMESG function type
-#define COLOR_DEMO           11
-#define READ_UNREAD          12
-#define HELPER               13
-#define SET_MIN_SEVERITY     14
-#define SET_MIN_FACILITY     15
-#define LIST_LEVELS          16
-#define INVALID_FLAG         17
-
-const char* mod_func_names[] = {"", "", "READ", "READ_ALL" , "READ_CLEAR", "CLEAR", "CONSOLE_OFF", "CONSOLE_ON", "CONSOLE_LEVEL", "SIZE_UNREAD", "SIZE_UNREAD", "SIZE_BUFFER"};
-
-// Kern log levels (severity levels)
-#define KERN_EMERG   0   
-#define KERN_ALERT   1  
-#define KERN_CRIT    2  
-#define KERN_ERR     3  
-#define KERN_WARNING 4  
-#define KERN_NOTICE  5  
-#define KERN_INFO    6
-#define KERN_DEBUG   7 
-
-const char* severities_names[] = {"KERN_EMERG", "KERN_ALERT", "KERN_CRIT", "KERN_ERR", "KERN_WARNING", "KERN_NOTICE", "KERN_INFO", "KERN_DEBUG"};
-
-// Facility levels
-typedef enum FacilityLevels{ FACILITY_KERNEL, FACILITY_USER, FACILITY_MAIL, FACILITY_DAEMON, FACILITY_AUTH, FACILITY_SYSLOG, FACILITY_LPR, FACILITY_NEWS, FACILITY_UUCP, FACILITY_CRON, FACILITY_AUTHPRIV, FACILITY_FTP, FACILITY_NTP, FACILITY_SECURITY, FACILITY_CONSOLE, FACILITY_SOLARIS_CRON, FACILITY_LOCAL0, FACILITY_LOCAL1, FACILITY_LOCAL2, FACILITY_LOCAL3, FACILITY_LOCAL4, FACILITY_LOCAL5, FACILITY_LOCAL6, FACILITY_LOCAL7} FacilityLevels;
-
-const char* facilities_names[] = { "FACILITY_KERNEL", "FACILITY_USER", "FACILITY_MAIL", "FACILITY_DAEMON", "FACILITY_AUTH", "FACILITY_SYSLOG", "FACILITY_LPR", "FACILITY_NEWS", "FACILITY_UUCP", "FACILITY_CRON", "FACILITY_AUTHPRIV", "FACILITY_FTP", "FACILITY_NTP", "FACILITY_SECURITY", "FACILITY_CONSOLE", "FACILITY_SOLARIS-cron", "FACILITY_LOCAL0", "FACILITY_LOCAL1", "FACILITY_LOCAL2", "FACILITY_LOCAL3", "FACILITY_LOCAL4", "FACILITY_LOCAL5", "FACILITY_LOCAL6", "FACILITY_LOCAL7"};
+#include "./utils.h"
 
 // TODO: Should probably refactor the code.
-// TODO: Revise the comments plus maybe this stuff could be better fitted within a structure, but still as a static variable
-// Static Variables
-static unsigned int min_severity = KERN_INFO;
-static unsigned int min_facility = FACILITY_KERNEL;
-static unsigned char mod_func = 0;
-static int kern_msg_buf_size = 0;
-static int log_level = KERN_INFO;
-static bool less_mode = FALSE;
-static bool reverse_mode = FALSE;
-static bool disable_colors = TRUE;
-static bool dump_kmesg = FALSE;
-static char dump_file_path[MAX_DUMP_FILE_PATH_SIZE] = {0};
-static FILE* dump_file = NULL;
-static char dump_offset[MAX_DUMP_OFFSET_LEN] = {0};
+// ------------------ 
+//  Static Variables
+// ------------------ 
+static KMESGlobal kmesglobal = {
+	.min_severity = KERN_INFO,
+	.min_facility = FACILITY_KERNEL,
+	.log_level = KERN_INFO,
+};
 
-unsigned int str_len(const char* str) {
-	if (str == NULL) return 0;
-	unsigned int i = 0;
-	while (str[i] != '\0') ++i;
-	return i;
-}
-
-static void mem_cpy(void* dest, const void* src, size_t size) {
-	if (dest == NULL || src == NULL) return;
-	for (size_t i = 0; i < size; ++i) ((unsigned char*) dest)[i] = ((unsigned char*)src)[i];
-	return;
-}
-
-static void mem_set(void* dest, unsigned char val, size_t size) {
-	if (dest == NULL) return;
-	for (size_t i = 0; i < size; ++i) ((unsigned char*) dest)[i] = val;
-	return;
-}
-
-unsigned int ref_chr_cnt(const char* str, unsigned int len, char chr) {
-	unsigned int ref_cnt = 0;
-	if (str == NULL) return 0;
-	for (unsigned int i = 0; i < len; ++i) if (str[i] == chr) ref_cnt++;
-	return ref_cnt;
-}
-
-long long int find_chr(const char* str, unsigned int len, char chr) {
-	if (str == NULL) return -2;
-	for (unsigned int i = 0; i < len; ++i) if (str[i] == chr) return (int) i;
-	return -1;
-}
-
-long long int str_to_int(const char* str) {
-	long long int value = 0;
-	if (str == NULL) return 0;
-
-	unsigned int i = 0;
-	while (str[i] != '\0') {
-		if (!IS_A_VAL(str[i])) {
-			KMESG_ERR(" this is not a valid value: " CRITICAL_COLOR "'%s'" RESET_COLOR ".\n", str);
-			return -1;
-		}
-	
-		value = (value * 10) + CHR_TO_INT(str[i]);
-		++i;
-	}
-	
-	return value;
-}
-
-int str_cmp(const char* str1, const char* str2) {
-    // Null Checks
-    if (str1 == NULL && str2 == NULL) return 0;
-    if (str1 == NULL) return -1;
-    else if (str2 == NULL) return 1;
-
-    size_t i = 0;
-    while (str1[i] != '\0' || str2[i] != '\0') {
-        if (str1[i] != str2[i]) return str1[i] - str2[i];
-        ++i;
-    }
-    
-	return 0;
-}
-
-int str_n_cmp(const char* str1, const char* str2, size_t n) {
-    // Null Checks
-    if (str1 == NULL && str2 == NULL) return 0;
-    if (str1 == NULL) return -1;
-    else if (str2 == NULL) return 1;
-
-    size_t i = 0;
-    while ((str1[i] != '\0' || str2[i] != '\0') && i < n) {
-        if (str1[i] != str2[i]) return str1[i] - str2[i];
-        ++i;
-    }
-
-	return 0;
-}
-
-void reverse_str_arr(char*** str_arr, unsigned int size) {
-	for (unsigned int i = 0; i < (size >> 1); ++i) {
-		char* temp = (*str_arr)[i];
-		(*str_arr)[i] = (*str_arr)[size - 1 - i];
-		(*str_arr)[size - 1 - i] = temp;
-	}
-	return;
-}
-
+// -----------------------
+//  Functions Definitions
+// -----------------------
 char** extract_lines(const char* str, unsigned int len, unsigned int* lines_cnt) {
 	unsigned int ref_cnt = ref_chr_cnt(str, len, '\n');
 	char** lines = (char**) calloc(ref_cnt, sizeof(char*));
@@ -278,7 +92,7 @@ void filter_severity_facility(char*** lines, unsigned int* lines_cnt) {
 		unsigned int severity = log_level % 8;
 		mem_set(log_level_str, 0, 25); // Reset the string after use
 
-		if (severity > min_severity || facility > min_facility) {
+		if (severity > kmesglobal.min_severity || facility > kmesglobal.min_facility) {
 			free((*lines)[i]);
 			for (unsigned int t = i; t < *lines_cnt - 1; ++t) (*lines)[t] = (*lines)[t + 1];
 			(*lines_cnt)--;
@@ -354,15 +168,15 @@ bool print_line(char* str_line) {
 	module_identifier[column_ref + 1] = '\0';
 	str_pos += column_ref + 1;
 
-	if (disable_colors) printf(RESET_COLOR "%s%s%s\n", timestamp, module_identifier, (str_line + str_pos));
+	if (kmesglobal.flag_modes & DISABLE_COLORS) printf(RESET_COLOR "%s%s%s\n", timestamp, module_identifier, (str_line + str_pos));
 	else printf(TIMESTAMP_COLOR "%s" RESET_COLOR "%s%s" RESET_COLOR "%s\n", timestamp, log_level_colors[severity], module_identifier, (str_line + str_pos));
 	
-	if (dump_kmesg && dump_file != NULL) {
+	if ((kmesglobal.flag_modes & DUMP_KMESG) && kmesglobal.dump_file != NULL) {
 		// Check if the timestamp offset matches
-		bool matches_offset = str_n_cmp(timestamp + 2, dump_offset, str_len(dump_offset)) == 0;
-		if (*dump_offset != '\0' && matches_offset) {
-			*dump_offset = '\0';
-		} else if (*dump_offset != '\0' && !matches_offset) {
+		bool matches_offset = str_n_cmp(timestamp + 2, kmesglobal.dump_offset, str_len(kmesglobal.dump_offset)) == 0;
+		if (*kmesglobal.dump_offset != '\0' && matches_offset) {
+			*kmesglobal.dump_offset = '\0';
+		} else if (*kmesglobal.dump_offset != '\0' && !matches_offset) {
 			free(timestamp);
 			free(module_identifier);
 			return TRUE;
@@ -370,13 +184,13 @@ bool print_line(char* str_line) {
 		
 		int line_size = 0;
 		char line[MAX_DUMP_LINE_SIZE] = {0};
-		if (disable_colors) line_size = snprintf(line, MAX_DUMP_LINE_SIZE, RESET_COLOR "%s%s%s\n", timestamp, module_identifier, (str_line + str_pos));
+		if (kmesglobal.flag_modes & DISABLE_COLORS) line_size = snprintf(line, MAX_DUMP_LINE_SIZE, RESET_COLOR "%s%s%s\n", timestamp, module_identifier, (str_line + str_pos));
 		else line_size = snprintf(line, MAX_DUMP_LINE_SIZE, TIMESTAMP_COLOR "%s" RESET_COLOR "%s%s" RESET_COLOR "%s\n", timestamp, log_level_colors[severity], module_identifier, (str_line + str_pos));
 		
-		if (fwrite(line, sizeof(char), line_size, dump_file) != (size_t) line_size) {
+		if (fwrite(line, sizeof(char), line_size, kmesglobal.dump_file) != (size_t) line_size) {
 			kmesg_perror("Failed to save the data to the dump file, because: ");
-			fclose(dump_file);
-			dump_file = NULL;
+			fclose(kmesglobal.dump_file);
+			kmesglobal.dump_file = NULL;
 		}
 	}
 
@@ -518,20 +332,20 @@ void print_kmsg(char* kmesg, unsigned int len) {
 	char** lines = extract_lines(kmesg, len, &lines_cnt);
 	if (lines == NULL || !lines_cnt) return; 
 	filter_severity_facility(&lines, &lines_cnt);
-	if (reverse_mode) reverse_str_arr(&lines, lines_cnt);
+	if (kmesglobal.flag_modes & REVERSE_MODE) reverse_str_arr(&lines, lines_cnt);
 
-	if (dump_kmesg) {
-		if ((dump_file = fopen(dump_file_path, "w")) == NULL) {
+	if (kmesglobal.flag_modes & DUMP_KMESG) {
+		if ((kmesglobal.dump_file = fopen(kmesglobal.dump_file_path, "w")) == NULL) {
 			kmesg_perror("Failed to open the dump file, because: ");
 		}
 	}
 	
-	if (less_mode) print_less(lines, lines_cnt);
+	if (kmesglobal.flag_modes & LESS_MODE) print_less(lines, lines_cnt);
 	else {
 		for (unsigned int i = 0; i < lines_cnt; ++i) print_line(lines[i]);
 	}
 	
-	if (dump_kmesg && dump_file != NULL) fclose(dump_file);
+	if ((kmesglobal.flag_modes & DUMP_KMESG) && kmesglobal.dump_file != NULL) fclose(kmesglobal.dump_file);
 
 	for (unsigned int i = 0; i < lines_cnt; ++i) free(lines[i]);
 	free(lines);
@@ -588,8 +402,8 @@ void print_helper(void) {
 	printf("\t\tb: Scroll up one screen.\n");
 	printf("\t\t[numbers]-Enter: Navigate to the specified line (max 12 digits). Exceeding 12 shifts input left to make space for the new digit.\n");
 	printf("\t-L:  Set the console log level to the value passed after the flag, which must be an integer between 1 and 8 (inclusive).\n");
-	printf("\t-s:  Set the MIN_SEVERITY using the value passed after the flag. The default value is '%s'.\n", severities_names[min_severity]);
-	printf("\t-f:  Set the MIN_FACILITY using the value passed after the flag. The default value is '%s'.\n", facilities_names[min_facility]);
+	printf("\t-s:  Set the MIN_SEVERITY using the value passed after the flag. The default value is '%s'.\n", severities_names[kmesglobal.min_severity]);
+	printf("\t-f:  Set the MIN_FACILITY using the value passed after the flag. The default value is '%s'.\n", facilities_names[kmesglobal.min_facility]);
 	printf("\t-l:  List SEVERITY levels and FACILITY levels.\n");
 	printf("\t--dump: Dump the content of the kernel ring buffer into the specified file, as --dump=file_path.\n");
 	printf("\t--dump-offset: Set the timestamp offset from which the content will be dumped, as --dump-offset=0.12.\n");
@@ -604,90 +418,89 @@ void read_flag(char* flag_arg) {
 	unsigned int arg_len = str_len(flag_arg);
 	
 	if (str_cmp(flag_arg, "--no-color") == 0) {
-		disable_colors = TRUE;
+		kmesglobal.flag_modes |= DISABLE_COLORS;
 		return;
 	} else if (str_n_cmp(flag_arg, "--dump=", 7) == 0) {
-		dump_kmesg = TRUE;
-		mem_cpy(dump_file_path, flag_arg + 7, MIN(MAX_DUMP_FILE_PATH_SIZE, arg_len - 7));
+		kmesglobal.flag_modes |= DUMP_KMESG;
+		mem_cpy(kmesglobal.dump_file_path, flag_arg + 7, MIN(MAX_DUMP_FILE_PATH_SIZE, arg_len - 7));
 		return;
 	} else if (str_n_cmp(flag_arg, "--dump-offset=", 14) == 0) {
-		mem_cpy(dump_offset, flag_arg + 14, MIN(MAX_DUMP_OFFSET_LEN, arg_len - 14));
+		mem_cpy(kmesglobal.dump_offset, flag_arg + 14, MIN(MAX_DUMP_OFFSET_LEN, arg_len - 14));
 		return;
 	}
-
 	
 	unsigned int internal_func = 0;
-	if (!mod_func) {
-		if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'C') mod_func = CLEAR; 
-		else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'R') mod_func = READ;
-		else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'u') mod_func = SIZE_UNREAD; 
-		else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'd') mod_func = COLOR_DEMO;
-		else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'r' && flag_arg[2] == 'a') mod_func = READ_ALL;
-		else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'r' && flag_arg[2] == 'c') mod_func = READ_CLEAR;
-		else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'r' && flag_arg[2] == 'u') mod_func = READ_UNREAD;
+	if (!kmesglobal.mod_func) {
+		if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'C') kmesglobal.mod_func = CLEAR; 
+		else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'R') kmesglobal.mod_func = READ;
+		else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'u') kmesglobal.mod_func = SIZE_UNREAD; 
+		else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'd') kmesglobal.mod_func = COLOR_DEMO;
+		else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'r' && flag_arg[2] == 'a') kmesglobal.mod_func = READ_ALL;
+		else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'r' && flag_arg[2] == 'c') kmesglobal.mod_func = READ_CLEAR;
+		else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'r' && flag_arg[2] == 'u') kmesglobal.mod_func = READ_UNREAD;
 		else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'r' && flag_arg[2] == 'v') { 
-			reverse_mode = TRUE;
+			kmesglobal.flag_modes |= REVERSE_MODE;
 			return;
-		} else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'c' && flag_arg[2] == 'e') mod_func = CONSOLE_ON;
-		else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'c' && flag_arg[2] == 'd') mod_func = CONSOLE_OFF;
+		} else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'c' && flag_arg[2] == 'e') kmesglobal.mod_func = CONSOLE_ON;
+		else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'c' && flag_arg[2] == 'd') kmesglobal.mod_func = CONSOLE_OFF;
 		else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'c' && flag_arg[2] == 'l') { 
-			less_mode = TRUE;
-		} else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'L') mod_func = CONSOLE_LEVEL;
-		else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'l') mod_func = LIST_LEVELS;
+			kmesglobal.flag_modes |= LESS_MODE;
+		} else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'L') kmesglobal.mod_func = CONSOLE_LEVEL;
+		else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'l') kmesglobal.mod_func = LIST_LEVELS;
 		else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 's') internal_func = SET_MIN_SEVERITY;
 		else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'f') internal_func = SET_MIN_FACILITY;
-		else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'h') mod_func = HELPER;
+		else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'h') kmesglobal.mod_func = HELPER;
 		else {
-			mod_func = INVALID_FLAG;
+			kmesglobal.mod_func = INVALID_FLAG;
 			KMESG_ERR("invalid flag: '%s'.\n", flag_arg);
 			return;
 		}
 	} else {
 		if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 's') internal_func = SET_MIN_SEVERITY;
 		else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'f') internal_func = SET_MIN_FACILITY;
-		else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'h') mod_func = HELPER;
-		else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'r' && flag_arg[2] == 'v') reverse_mode = TRUE;
-		else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'c' && flag_arg[2] == 'l') less_mode = TRUE;
+		else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'h') kmesglobal.mod_func = HELPER;
+		else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'r' && flag_arg[2] == 'v') kmesglobal.flag_modes |= REVERSE_MODE;
+		else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'c' && flag_arg[2] == 'l') kmesglobal.flag_modes |= LESS_MODE;
 		else {
-			mod_func = INVALID_FLAG;
+			kmesglobal.mod_func = INVALID_FLAG;
 			KMESG_ERR("invalid flag: '%s'.\n", flag_arg);
 			return;
 		}
 	}
 
-	if (mod_func == HELPER || mod_func == LIST_LEVELS || mod_func == COLOR_DEMO) return;
+	if (kmesglobal.mod_func == HELPER || kmesglobal.mod_func == LIST_LEVELS || kmesglobal.mod_func == COLOR_DEMO) return;
 
 	if (internal_func) {
 		long long int value_pos = find_chr(flag_arg, arg_len, '=');
 		if (value_pos < 0) return;
 		int value = str_to_int(flag_arg + value_pos + 1);
 		if (value < 0) {
-			mod_func = INVALID_FLAG;
+			kmesglobal.mod_func = INVALID_FLAG;
 			return;
 		}
-		if (internal_func == SET_MIN_SEVERITY) min_severity = value;
-		else min_facility = value;
+		if (internal_func == SET_MIN_SEVERITY) kmesglobal.min_severity = value;
+		else kmesglobal.min_facility = value;
 		return;
 	}
 
-	if (mod_func == READ || mod_func == READ_ALL || mod_func == READ_CLEAR) {
+	if (kmesglobal.mod_func == READ || kmesglobal.mod_func == READ_ALL || kmesglobal.mod_func == READ_CLEAR) {
 		long long int value_pos = find_chr(flag_arg, arg_len, '=');
 		if (value_pos < 0) return;
-		kern_msg_buf_size = str_to_int(flag_arg + value_pos + 1);
-		if (kern_msg_buf_size < 0) {
-			mod_func = INVALID_FLAG;
+		kmesglobal.kern_msg_buf_size = str_to_int(flag_arg + value_pos + 1);
+		if (kmesglobal.kern_msg_buf_size < 0) {
+			kmesglobal.mod_func = INVALID_FLAG;
 			return;
 		}
-	} else if (mod_func == CONSOLE_LEVEL) {
+	} else if (kmesglobal.mod_func == CONSOLE_LEVEL) {
 		long long int value_pos = find_chr(flag_arg, arg_len, '=');
 		if (value_pos < 0) return;
-		log_level = str_to_int(flag_arg + value_pos + 1);
-		if (log_level < 0) {
-			mod_func = INVALID_FLAG;
+		kmesglobal.log_level = str_to_int(flag_arg + value_pos + 1);
+		if (kmesglobal.log_level < 0) {
+			kmesglobal.mod_func = INVALID_FLAG;
 			return;
-		} else if (log_level > 8 || log_level < 1) {
-			mod_func = INVALID_FLAG;
-			KMESG_ERR("invalid log level: %d, log levels must be in interval [1..8].\n", log_level);
+		} else if (kmesglobal.log_level > 8 || kmesglobal.log_level < 1) {
+			kmesglobal.mod_func = INVALID_FLAG;
+			KMESG_ERR("invalid log level: %d, log levels must be in interval [1..8].\n", kmesglobal.log_level);
 			return;
 		}
 	} 
@@ -701,71 +514,72 @@ int main(int argc, char* argv[]) {
 		argc--;
 		while (arg_cnt++, argc--) {
 			read_flag(argv[arg_cnt]);
-			if (mod_func == INVALID_FLAG) return -1;
+			if (kmesglobal.mod_func == INVALID_FLAG) return -1;
 		}
 	}
 
-	if (mod_func == HELPER) {
+	if (kmesglobal.mod_func == HELPER) {
 		print_helper();
 		return 0;
-	} else if (mod_func == COLOR_DEMO) {
+	} else if (kmesglobal.mod_func == COLOR_DEMO) {
 		print_color_demo();
 		return 0;
-	} else if (mod_func == LIST_LEVELS) {
+	} else if (kmesglobal.mod_func == LIST_LEVELS) {
 		print_list_levels();
 		return 0;
 	}
 
-	if (!mod_func) mod_func = READ_ALL;
+	if (!kmesglobal.mod_func) kmesglobal.mod_func = READ_ALL;
 
-	if (mod_func == READ || mod_func == READ_ALL || mod_func == READ_CLEAR || mod_func == READ_UNREAD) {
-		if (!kern_msg_buf_size && (mod_func == READ_ALL || mod_func == READ_CLEAR)) {
-			if ((kern_msg_buf_size = klogctl(SIZE_BUFFER, NULL, 0)) < 0) {
+	if (kmesglobal.mod_func == READ || kmesglobal.mod_func == READ_ALL || kmesglobal.mod_func == READ_CLEAR || kmesglobal.mod_func == READ_UNREAD) {
+		if (!kmesglobal.kern_msg_buf_size && (kmesglobal.mod_func == READ_ALL || kmesglobal.mod_func == READ_CLEAR)) {
+			if ((kmesglobal.kern_msg_buf_size = klogctl(SIZE_BUFFER, NULL, 0)) < 0) {
 				kmesg_perror("failed to execute the function: " CRITICAL_COLOR "SIZE_BUFFER" RESET_COLOR ", because: ");
 				return -1;
 			}
-		} else if (mod_func == READ_UNREAD) { 
-			if ((kern_msg_buf_size = klogctl(SIZE_UNREAD, NULL, 0)) < 0) {
+		} else if (kmesglobal.mod_func == READ_UNREAD) { 
+			if ((kmesglobal.kern_msg_buf_size = klogctl(SIZE_UNREAD, NULL, 0)) < 0) {
 				kmesg_perror("failed to execute the function: " CRITICAL_COLOR "SIZE_UNREAD" RESET_COLOR ", because: ");
 				return -1;
 			}
-			mod_func = READ; // Change the mod func to READ, to execute the READ command, as part of the READ_UNREAD command
-		} else if (!kern_msg_buf_size) kern_msg_buf_size = DEFAULT_MSG_BUF_SIZE;
+			kmesglobal.mod_func = READ; // Change the mod func to READ, to execute the READ command, as part of the READ_UNREAD command
+		} else if (!kmesglobal.kern_msg_buf_size) kmesglobal.kern_msg_buf_size = DEFAULT_MSG_BUF_SIZE;
 		
-		if (less_mode) printf("\033[?1049h"); // Switch to the alternate screen buffer
-		printf(KMESG_COLOR "KMESG:" RESET_COLOR " the buffer size is set to \'%d\' bytes.\n", kern_msg_buf_size);	
+		if (kmesglobal.flag_modes & LESS_MODE) printf("\033[?1049h"); // Switch to the alternate screen buffer
+		printf(KMESG_COLOR "KMESG:" RESET_COLOR " the buffer size is set to \'%d\' bytes.\n", kmesglobal.kern_msg_buf_size);	
 
-		char* msg_buff = (char*) calloc(kern_msg_buf_size, sizeof(char));
+		char* msg_buff = (char*) calloc(kmesglobal.kern_msg_buf_size, sizeof(char));
 		if (msg_buff == NULL) {
 			KMESG_ERR("failed to allocate the msg buffer.\n");
 			return -1;
 		}
 
 		int ret = 0;
-		if ((ret = klogctl(mod_func, msg_buff, kern_msg_buf_size)) < 0) {
+		if ((ret = klogctl(kmesglobal.mod_func, msg_buff, kmesglobal.kern_msg_buf_size)) < 0) {
 			free(msg_buff);
-			kmesg_perror("failed to execute the function: " CRITICAL_COLOR "%s" RESET_COLOR ", because: ", mod_func_names[mod_func]);
+			kmesg_perror("failed to execute the function: " CRITICAL_COLOR "%s" RESET_COLOR ", because: ", mod_func_names[kmesglobal.mod_func]);
 			return -1;
 		}
 
 		print_kmsg(msg_buff, ret);
 		free(msg_buff);
-		if (less_mode) printf("\033[?1049l"); // Restore the primary screen buffer
+		if (kmesglobal.flag_modes & LESS_MODE) printf("\033[?1049l"); // Restore the primary screen buffer
 
-	} else if (mod_func == CLEAR || mod_func == CONSOLE_ON || mod_func == CONSOLE_OFF || mod_func == SIZE_UNREAD || mod_func == CONSOLE_LEVEL) {
+	} else if (kmesglobal.mod_func == CLEAR || kmesglobal.mod_func == CONSOLE_ON || kmesglobal.mod_func == CONSOLE_OFF || kmesglobal.mod_func == SIZE_UNREAD || kmesglobal.mod_func == CONSOLE_LEVEL) {
 		int ret = 0;
-		if (mod_func == CONSOLE_LEVEL) ret = klogctl(mod_func, NULL, log_level);
-		else ret = klogctl(mod_func, NULL, 0);
+		if (kmesglobal.mod_func == CONSOLE_LEVEL) ret = klogctl(kmesglobal.mod_func, NULL, kmesglobal.log_level);
+		else ret = klogctl(kmesglobal.mod_func, NULL, 0);
 		
 		if (ret < 0) {
-			kmesg_perror("failed to execute the function: " CRITICAL_COLOR "%s" RESET_COLOR ", because: ", mod_func_names[mod_func]);
+			kmesg_perror("failed to execute the function: " CRITICAL_COLOR "%s" RESET_COLOR ", because: ", mod_func_names[kmesglobal.mod_func]);
 			return -1;
 		}
 
-		if (mod_func == SIZE_UNREAD) printf("The number of bytes currently available to be read from the kernel log buffer is: %d.\n", ret);	
-		else printf("Operation: " CRITICAL_COLOR "%s" RESET_COLOR " executed successfully.\n", mod_func_names[mod_func]);	
+		if (kmesglobal.mod_func == SIZE_UNREAD) printf("The number of bytes currently available to be read from the kernel log buffer is: %d.\n", ret);	
+		else printf("Operation: " CRITICAL_COLOR "%s" RESET_COLOR " executed successfully.\n", mod_func_names[kmesglobal.mod_func]);	
 
-	} else if (mod_func == COLOR_DEMO) print_color_demo();
+	} else if (kmesglobal.mod_func == COLOR_DEMO) print_color_demo();
 
 	return 0;
 }
+
