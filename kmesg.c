@@ -26,12 +26,17 @@
 
 typedef unsigned char bool;
 
+#define MAX_DUMP_FILE_PATH_SIZE 512
+#define DEFAULT_MSG_BUF_SIZE    8192
+#define MAX_DUMP_LINE_SIZE      512
+
 #define FALSE 0
 #define TRUE 1
-#define CHR_TO_INT(chr) ((int)chr - 48)
-#define IS_A_VAL(chr) (chr >= 48 && chr <= 57)
-#define MAX(a, b) a > b ? a : b
-#define MIN(a, b) a < b ? a : b
+
+#define CHR_TO_INT(chr) ((int)(chr) - 48)
+#define IS_A_VAL(chr)   (((chr) >= 48) && ((chr) <= 57))
+#define MAX(a, b)       ((a) > (b) ? (a) : (b)) 
+#define MIN(a, b)       ((a) < (b) ? (a) : (b)) 
 
 // Define log levels as an enum
 typedef enum LogLevels {
@@ -69,10 +74,10 @@ const char* log_level_colors[] = {
     DEBUG_COLOR       // LOG_DEBUG
 };
 
-#define KMESG_ERR(fmt, ...) printf(ERROR_COLOR "KMESG_ERROR" RESET_COLOR "(line: %u):" fmt, __LINE__, ##__VA_ARGS__)
+#define KMESG_ERR(fmt, ...)    printf(ERROR_COLOR "KMESG_ERROR" RESET_COLOR "(line: %u):" fmt, __LINE__, ##__VA_ARGS__)
 #define kmesg_perror(fmt, ...) KMESG_ERR(fmt WARNING_COLOR "%s.\n" RESET_COLOR, ##__VA_ARGS__, strerror(errno))
 
-#define KMESG_VERSION "1.1.0"
+#define KMESG_VERSION "1.2.0"
 
 // Kernel function types
 #define READ          2
@@ -93,7 +98,6 @@ const char* log_level_colors[] = {
 #define SET_MIN_FACILITY     15
 #define LIST_LEVELS          16
 #define INVALID_FLAG         17
-#define DEFAULT_MSG_BUF_SIZE 8192
 
 const char* mod_func_names[] = {"", "", "READ", "READ_ALL" , "READ_CLEAR", "CLEAR", "CONSOLE_OFF", "CONSOLE_ON", "CONSOLE_LEVEL", "SIZE_UNREAD", "SIZE_UNREAD", "SIZE_BUFFER"};
 
@@ -114,6 +118,8 @@ typedef enum FacilityLevels{ FACILITY_KERNEL, FACILITY_USER, FACILITY_MAIL, FACI
 
 const char* facilities_names[] = { "FACILITY_KERNEL", "FACILITY_USER", "FACILITY_MAIL", "FACILITY_DAEMON", "FACILITY_AUTH", "FACILITY_SYSLOG", "FACILITY_LPR", "FACILITY_NEWS", "FACILITY_UUCP", "FACILITY_CRON", "FACILITY_AUTHPRIV", "FACILITY_FTP", "FACILITY_NTP", "FACILITY_SECURITY", "FACILITY_CONSOLE", "FACILITY_SOLARIS-cron", "FACILITY_LOCAL0", "FACILITY_LOCAL1", "FACILITY_LOCAL2", "FACILITY_LOCAL3", "FACILITY_LOCAL4", "FACILITY_LOCAL5", "FACILITY_LOCAL6", "FACILITY_LOCAL7"};
 
+// TODO: Should probably refactor the code.
+// TODO: Revise the comments plus maybe this stuff could be better fitted within a structure, but still as a static variable
 // Static Variables
 static unsigned int min_severity = KERN_INFO;
 static unsigned int min_facility = FACILITY_KERNEL;
@@ -122,15 +128,19 @@ static int kern_msg_buf_size = 0;
 static int log_level = KERN_INFO;
 static bool less_mode = FALSE;
 static bool reverse_mode = FALSE;
+static bool disable_colors = TRUE;
+static bool dump_kmesg = FALSE;
+static char dump_file_path[MAX_DUMP_FILE_PATH_SIZE] = {0};
+static FILE* dump_file = NULL;
 
-unsigned int str_len(char* str) {
+unsigned int str_len(const char* str) {
 	if (str == NULL) return 0;
 	unsigned int i = 0;
 	while (str[i] != '\0') ++i;
 	return i;
 }
 
-static void mem_cpy(void* dest, void* src, size_t size) {
+static void mem_cpy(void* dest, const void* src, size_t size) {
 	if (dest == NULL || src == NULL) return;
 	for (size_t i = 0; i < size; ++i) ((unsigned char*) dest)[i] = ((unsigned char*)src)[i];
 	return;
@@ -142,36 +152,77 @@ static void mem_set(void* dest, unsigned char val, size_t size) {
 	return;
 }
 
-unsigned int ref_chr_cnt(char* str, unsigned int len, char chr) {
+unsigned int ref_chr_cnt(const char* str, unsigned int len, char chr) {
 	unsigned int ref_cnt = 0;
 	if (str == NULL) return 0;
 	for (unsigned int i = 0; i < len; ++i) if (str[i] == chr) ref_cnt++;
 	return ref_cnt;
 }
 
-long long int find_chr(char* str, unsigned int len, char chr) {
+long long int find_chr(const char* str, unsigned int len, char chr) {
 	if (str == NULL) return -2;
 	for (unsigned int i = 0; i < len; ++i) if (str[i] == chr) return (int) i;
 	return -1;
 }
 
-long long int str_to_int(char* str) {
+long long int str_to_int(const char* str) {
 	long long int value = 0;
 	if (str == NULL) return 0;
+
 	unsigned int i = 0;
 	while (str[i] != '\0') {
 		if (!IS_A_VAL(str[i])) {
 			KMESG_ERR(" this is not a valid value: " CRITICAL_COLOR "'%s'" RESET_COLOR ".\n", str);
 			return -1;
 		}
-		value *= 10;
-		value += CHR_TO_INT(str[i]);
+	
+		value = (value * 10) + CHR_TO_INT(str[i]);
 		++i;
 	}
+	
 	return value;
 }
 
-char** extract_lines(char* str, unsigned int len, unsigned int* lines_cnt) {
+int str_cmp(const char* str1, const char* str2) {
+    // Null Checks
+    if (str1 == NULL && str2 == NULL) return 0;
+    if (str1 == NULL) return -1;
+    else if (str2 == NULL) return 1;
+
+    size_t i = 0;
+    while (str1[i] != '\0' || str2[i] != '\0') {
+        if (str1[i] != str2[i]) return str1[i] - str2[i];
+        ++i;
+    }
+    
+	return 0;
+}
+
+int str_n_cmp(const char* str1, const char* str2, size_t n) {
+    // Null Checks
+    if (str1 == NULL && str2 == NULL) return 0;
+    if (str1 == NULL) return -1;
+    else if (str2 == NULL) return 1;
+
+    size_t i = 0;
+    while ((str1[i] != '\0' || str2[i] != '\0') && i < n) {
+        if (str1[i] != str2[i]) return str1[i] - str2[i];
+        ++i;
+    }
+
+	return 0;
+}
+
+void reverse_str_arr(char*** str_arr, unsigned int size) {
+	for (unsigned int i = 0; i < (size >> 1); ++i) {
+		char* temp = (*str_arr)[i];
+		(*str_arr)[i] = (*str_arr)[size - 1 - i];
+		(*str_arr)[size - 1 - i] = temp;
+	}
+	return;
+}
+
+char** extract_lines(const char* str, unsigned int len, unsigned int* lines_cnt) {
 	unsigned int ref_cnt = ref_chr_cnt(str, len, '\n');
 	char** lines = (char**) calloc(ref_cnt, sizeof(char*));
 	if (lines == NULL) {
@@ -276,6 +327,7 @@ bool print_line(char* str_line) {
 		KMESG_ERR("failed to allocate the timestamp buff.\n");
 		return FALSE;
 	}
+
 	mem_cpy(timestamp, str_line + str_pos, timestamp_end_pos + 1);
 	timestamp[timestamp_end_pos + 1] = '\0';
 	str_pos += timestamp_end_pos + 1;
@@ -300,7 +352,20 @@ bool print_line(char* str_line) {
 	module_identifier[column_ref + 1] = '\0';
 	str_pos += column_ref + 1;
 
-	printf(TIMESTAMP_COLOR "%s" RESET_COLOR "%s%s" RESET_COLOR "%s\n", timestamp, log_level_colors[severity], module_identifier, (str_line + str_pos));
+	if (disable_colors) printf(RESET_COLOR "%s%s%s\n", timestamp, module_identifier, (str_line + str_pos));
+	else printf(TIMESTAMP_COLOR "%s" RESET_COLOR "%s%s" RESET_COLOR "%s\n", timestamp, log_level_colors[severity], module_identifier, (str_line + str_pos));
+	
+	if (dump_kmesg && dump_file != NULL) {
+		char line[MAX_DUMP_LINE_SIZE] = {0};
+		int line_size = 0;
+		if (disable_colors) line_size = snprintf(line, MAX_DUMP_LINE_SIZE, RESET_COLOR "%s%s%s\n", timestamp, module_identifier, (str_line + str_pos));
+		else line_size = snprintf(line, MAX_DUMP_LINE_SIZE, TIMESTAMP_COLOR "%s" RESET_COLOR "%s%s" RESET_COLOR "%s\n", timestamp, log_level_colors[severity], module_identifier, (str_line + str_pos));
+		if (fwrite(line, sizeof(char), line_size, dump_file) != (size_t) line_size) {
+			kmesg_perror("Failed to save the data to the dump file, because: ");
+			fclose(dump_file);
+			dump_file = NULL;
+		}
+	}
 
 	free(timestamp);
 	free(module_identifier);
@@ -319,7 +384,7 @@ struct termios enable_raw_mode() {
     // Modify settings for raw mode
 	raw.c_lflag &= ~(ECHO | ICANON); // Disable echo and canonical mode
 	if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) {
-		kmesg_perror("failed to set tcsetattr");
+		kmesg_perror("failed to set tcsetattr, because: ");
 		return orig_termios;
 	}
 	return orig_termios;
@@ -431,17 +496,9 @@ void print_less(char** lines, long long int lines_cnt) {
 
 }
 
-void reverse_str_arr(char*** str_arr, unsigned int size) {
-	for (unsigned int i = 0; i < (size >> 1); ++i) {
-		char* temp = (*str_arr)[i];
-		(*str_arr)[i] = (*str_arr)[size - 1 - i];
-		(*str_arr)[size - 1 - i] = temp;
-	}
-	return;
-}
-
 void print_kmsg(char* kmesg, unsigned int len) {
 	printf(KMESG_COLOR "KMESG: " RESET_COLOR "Read %d bytes, messages in the kernel ring buffer: \n", len);
+	
 	// Extract the lines and then process each one of them
 	unsigned int lines_cnt = 0;
 	char** lines = extract_lines(kmesg, len, &lines_cnt);
@@ -449,11 +506,20 @@ void print_kmsg(char* kmesg, unsigned int len) {
 	filter_severity_facility(&lines, &lines_cnt);
 	if (reverse_mode) reverse_str_arr(&lines, lines_cnt);
 
+	if (dump_kmesg) {
+		if ((dump_file = fopen(dump_file_path, "w")) == NULL) {
+			kmesg_perror("Failed to open the dump file, because: ");
+		}
+	}
+	
 	if (less_mode) print_less(lines, lines_cnt);
 	else {
 		for (unsigned int i = 0; i < lines_cnt; ++i) print_line(lines[i]);
 	}
-		
+	
+	// TODO: Should maybe fix the file ownership problem	
+	if (dump_kmesg && dump_file != NULL) fclose(dump_file);
+
 	for (unsigned int i = 0; i < lines_cnt; ++i) free(lines[i]);
 	free(lines);
 	
@@ -512,13 +578,26 @@ void print_helper(void) {
 	printf("\t-s:  Set the MIN_SEVERITY using the value passed after the flag. The default value is '%s'.\n", severities_names[min_severity]);
 	printf("\t-f:  Set the MIN_FACILITY using the value passed after the flag. The default value is '%s'.\n", facilities_names[min_facility]);
 	printf("\t-l:  List SEVERITY levels and FACILITY levels.\n");
+	printf("\t--dump: Dump the content of the kernel ring buffer into the specified file, as --dump=file_path.\n");
+	printf("\t--no-color: print in old fashioned black & white.\n");
 	printf("\t-h:  Show this page.\n");
 	printf("\n" KMESG_COLOR "KMESG: " DEBUG_COLOR "A colored alternative to " NOTICE_COLOR "dmesg" WARNING_COLOR ", by" KMESG_COLOR " \'TheProgxy\'" RESET_COLOR ", (" KMESG_COLOR "KMESG_VERSION: " TIMESTAMP_COLOR KMESG_VERSION RESET_COLOR").\n");
 	return; 
 }
 
+// TODO: Should both replace the flag matching technique, as well as using '--' instead of '-' and full flag name when needed for clarity
 void read_flag(char* flag_arg) {
 	unsigned int arg_len = str_len(flag_arg);
+	
+	if (str_cmp(flag_arg, "--no-color") == 0) {
+		disable_colors = TRUE;
+		return;
+	} else if (str_n_cmp(flag_arg, "--dump=", 7) == 0) {
+		dump_kmesg = TRUE;
+		mem_cpy(dump_file_path, flag_arg + 7, MIN(MAX_DUMP_FILE_PATH_SIZE, arg_len - 7));
+		return;
+	}
+	
 	unsigned int internal_func = 0;
 	if (!mod_func) {
 		if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'C') mod_func = CLEAR; 
@@ -542,7 +621,7 @@ void read_flag(char* flag_arg) {
 		else if (arg_len > 1 && flag_arg[0] == '-' && flag_arg[1] == 'h') mod_func = HELPER;
 		else {
 			mod_func = INVALID_FLAG;
-			KMESG_ERR("invalid flag: '%s'\n.", flag_arg);
+			KMESG_ERR("invalid flag: '%s'.\n", flag_arg);
 			return;
 		}
 	} else {
@@ -553,11 +632,11 @@ void read_flag(char* flag_arg) {
 		else if (arg_len > 2 && flag_arg[0] == '-' && flag_arg[1] == 'c' && flag_arg[2] == 'l') less_mode = TRUE;
 		else {
 			mod_func = INVALID_FLAG;
-			KMESG_ERR("invalid flag: '%s'\n.", flag_arg);
+			KMESG_ERR("invalid flag: '%s'.\n", flag_arg);
 			return;
 		}
 	}
-	
+
 	if (mod_func == HELPER || mod_func == LIST_LEVELS || mod_func == COLOR_DEMO) return;
 
 	if (internal_func) {
