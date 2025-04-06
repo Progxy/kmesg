@@ -15,15 +15,14 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include <termcap.h>
-#include <termios.h>
-#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 #include <sys/klog.h>
 #include <errno.h>
-#include <string.h>
+#include <string.h> // TODO: This could be substituted with str_error.h
 #include "./utils.h"
+#include "./kmesg_less.h"
 
 /* -------------------------------------------------------------------------------------------------------- */
 // ------------------ 
@@ -242,144 +241,6 @@ bool print_line(char* str_line) {
 	return TRUE;
 }
 
-struct termios enable_raw_mode() {
-	struct termios orig_termios = {0};
-    struct termios raw = {0};
-
-    // Get current terminal settings
-    tcgetattr(STDIN_FILENO, &orig_termios);
-    raw = orig_termios;
-
-    // Modify settings for raw mode
-	raw.c_lflag &= ~(ECHO | ICANON); // Disable echo and canonical mode
-	if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) {
-		kmesg_perror("failed to set tcsetattr, because: ");
-		return orig_termios;
-	}
-	return orig_termios;
-}
-
-void disable_raw_mode(struct termios orig_termios) {
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios); // Restore original settings
-	return;
-}
-
-bool print_screen(char* clear_cmd, long long int start_line, unsigned int term_height, char** lines, long long int lines_cnt, struct termios original_settings) {
-	printf("%s", clear_cmd); 
-	
-	for (long long int i = start_line, j = 0; (j < term_height) && (i < lines_cnt); ++i, ++j) {
-		if (i < 0) {
-			printf("\n");
-			continue;
-		}
-
-		if (!print_line(lines[i])) {
-			disable_raw_mode(original_settings);
-			return FALSE;
-		}
-	}
-
-	printf(KMESG_COLOR "KMESG: " RESET_COLOR "Line %lld out of %lld (%u%%)\n:", start_line + term_height, lines_cnt, (unsigned int) (((float)(start_line + term_height) / lines_cnt) * 100.0f));
-	fflush(stdout);
-
-	return TRUE;
-}
-
-void echo_char(char c) {
-	if (c == 127 || c == 8) printf("\b \b");
-	else printf("%c", c);
-	fflush(stdout);
-	return;
-}
-
-// TODO: Should most probably either just decompose the following function, or even better give it a dedicated file, with the other termios operations
-// TODO: Should most probably add the search function 
-void print_less(char** lines, long long int lines_cnt) {
-	// Load termcap and enable raw mode
-    char term_buffer[2048] = {0};
-    if (tgetent(term_buffer, getenv("TERM")) <= 0) return;
-
-    char* clear_cmd = tgetstr("cl", NULL);
-    long long int term_height = tgetnum("li") - 2;
-    struct termios original_settings = enable_raw_mode();
-
-	// Init Screen
-	long long int start_line = -term_height + 1; 
-	if (!print_screen(clear_cmd, start_line, term_height, lines, lines_cnt, original_settings)) return;
-	
-	char c = 0;
-	char buf[12] = {0};
-	unsigned char buf_index = 0;
-	while (read(STDIN_FILENO, &c, 1) == 1) {
-		if (c == 'q') break;
-		else if (c == 'g' || c == '<') start_line = -term_height + 1;
-		else if (c == 'G' || c == '>') start_line = lines_cnt - term_height;
-		else if ((c == 'j') && (start_line < lines_cnt - term_height)) start_line++; 
-		else if ((c == 'k') && (start_line > -term_height + 1)) start_line--;
-		else if ((c == ' ') && (start_line < lines_cnt - term_height)) {
-			start_line += term_height; 
-			start_line = MIN(start_line, lines_cnt - term_height);
-		} else if ((c == 'b') && (start_line > -term_height + 1)) {
-			start_line -= term_height;
-			start_line = MAX(start_line, -term_height + 1);
-		}
-		else if (c == '\033') {
-			char seq[3] = {0};
-			if (read(STDIN_FILENO, &seq[0], 1) == 0) break;
-			if (read(STDIN_FILENO, &seq[1], 1) == 0) break;
-			
-			if (seq[0] == '[') {
-				if ((seq[1] == 'A') && (start_line > -term_height + 1)) start_line--;
-				else if ((seq[1] == 'B') && (start_line < lines_cnt - term_height)) start_line++;
-			}
-		} else if (IS_A_VAL(c)) {
-			echo_char(c);
-			buf[buf_index] = c;
-			buf_index++;
-			
-			while(read(STDIN_FILENO, &c, 1) == 1) {
-				echo_char(c);
-			   	if (c == '\n') break;
-				if (IS_A_VAL(c)) {
-					// Shift the chars inside the buffer left
-					if (buf_index == 11) mem_cpy(buf, buf + 1, 11);
-					buf[buf_index] = c;
-					buf_index = (buf_index + 1) % 12;
-				} else if (c == 127 || c == 8) {
-					if (buf_index > 0) {
-						buf[--buf_index] = '\0';
-					}
-				}
-			}
-
-			if (buf_index) {
-				long long int line = str_to_int(buf);
-				if (line <= 0 || (line > lines_cnt)) {
-					if (!print_screen(clear_cmd, start_line, term_height - 1, lines, lines_cnt, original_settings)) return;
-					if (line < 0) KMESG_ERR(" Not a value: '%s'\n", buf);
-					else if (line > lines_cnt || line == 0) KMESG_ERR(" Invalid value: %lld, it must be between 1 and %lld\n", line, lines_cnt);
-					buf_index = 0;
-					mem_set(buf, 0, 12);
-					continue;
-				}
-
-				start_line = line - term_height;
-				if (!print_screen(clear_cmd, start_line, term_height, lines, lines_cnt, original_settings)) return;
-			} 
-
-			buf_index = 0;
-			mem_set(buf, 0, 12);
-		}
-		
-		if (!print_screen(clear_cmd, start_line, term_height, lines, lines_cnt, original_settings)) return;
-	}
-
-    disable_raw_mode(original_settings);
-    
-	return;
-
-}
-
 void print_kmsg(char* kmesg, unsigned int len) {
 	printf(KMESG_COLOR "KMESG: " RESET_COLOR "Read %d bytes, messages in the kernel ring buffer: \n", len);
 	
@@ -457,6 +318,7 @@ void print_helper(void) {
 	printf("\t\tSpace: Scroll down one screen.\n");
 	printf("\t\tb:     Scroll up one screen.\n");
 	printf("\t\t[number]-Enter: Navigate to the specified line (max 12 digits). Exceeding 12 shifts input left to make space for the new digit.\n");
+	printf("\t\t/: Trigger the search function, then after insertion <Enter> for searching, <Enter> again for exiting the search mode (<ESC> performs exit at any moment).\n");
 	printf("\t--L:  Set the console log level to the value passed after the flag, which must be an integer between 1 and 8 (inclusive).\n");
 	printf("\t--s:  Set the MIN_SEVERITY using the value passed after the flag. The default value is '%s'.\n", severities_names[kmesglobal.min_severity]);
 	printf("\t--f:  Set the MIN_FACILITY using the value passed after the flag. The default value is '%s'.\n", facilities_names[kmesglobal.min_facility]);

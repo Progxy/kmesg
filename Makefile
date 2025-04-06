@@ -5,7 +5,7 @@ all: kmesg
 install: kmesg
 	mv ./kmesg /usr/local/sbin
 
-kmesg: kmesg.c
+kmesg: kmesg.c kmesg_less.h utils.h
 	gcc $(FLAGS) -lncurses $< -o $@
 
 clean:
