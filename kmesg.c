@@ -175,15 +175,14 @@ int get_timestamp_and_identifier(char* str_line, unsigned int len, unsigned int*
 
 void dump_line(char* str_line, char* timestamp, char* module_identifier, unsigned int str_pos, unsigned int severity) {
 	// Check if the timestamp offset matches
-	bool matches_offset = str_n_cmp(timestamp + 2, kmesglobal.dump_offset, str_len(kmesglobal.dump_offset)) == 0;
-	if (*kmesglobal.dump_offset != '\0' && matches_offset) {
+	unsigned int space = 0;
+	unsigned int timestamp_len = str_len(timestamp);
+	while (space < timestamp_len && !IS_A_VAL(timestamp[space])) space++;
+
+	if (*kmesglobal.dump_offset != '\0' && (str_n_cmp(timestamp + space, kmesglobal.dump_offset, str_len(kmesglobal.dump_offset)) == 0)) {
 		*kmesglobal.dump_offset = '\0';
-	} else if (*kmesglobal.dump_offset != '\0' && !matches_offset) {
-		SAFE_FREE(timestamp);
-		SAFE_FREE(module_identifier);
-		return;
-	}
-	
+	} else if (*kmesglobal.dump_offset != '\0') return;
+
 	int line_size = 0;
 	char line[MAX_DUMP_LINE_SIZE] = {0};
 	
