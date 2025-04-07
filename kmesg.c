@@ -187,8 +187,8 @@ void dump_line(char* str_line, char* timestamp, char* module_identifier, unsigne
 	char line[MAX_DUMP_LINE_SIZE] = {0};
 	
 	if (kmesglobal.flag_modes & DISABLE_COLORS) {
-		if (module_identifier != NULL) line_size = snprintf(line, MAX_DUMP_LINE_SIZE, RESET_COLOR "%s%s%s\n", timestamp, module_identifier, (str_line + str_pos));
-		else line_size = snprintf(line, MAX_DUMP_LINE_SIZE, RESET_COLOR "%s" RESET_COLOR "%s\n", timestamp, (str_line + str_pos));
+		if (module_identifier != NULL) line_size = snprintf(line, MAX_DUMP_LINE_SIZE, "%s%s%s\n", timestamp, module_identifier, (str_line + str_pos));
+		else line_size = snprintf(line, MAX_DUMP_LINE_SIZE, "%s%s\n", timestamp, (str_line + str_pos));
 	} else {
 		if (module_identifier != NULL) line_size = snprintf(line, MAX_DUMP_LINE_SIZE, TIMESTAMP_COLOR "%s" RESET_COLOR "%s%s" RESET_COLOR "%s\n", timestamp, log_level_colors[severity], module_identifier, (str_line + str_pos));
 		else line_size = snprintf(line, MAX_DUMP_LINE_SIZE, TIMESTAMP_COLOR "%s" RESET_COLOR "%s\n", timestamp, (str_line + str_pos));
@@ -223,8 +223,8 @@ bool print_line(char* str_line) {
 	}
 	
 	if (kmesglobal.flag_modes & DISABLE_COLORS) {
-		if (module_identifier != NULL) printf(RESET_COLOR "%s%s%s\n", timestamp, module_identifier, (str_line + str_pos));
-		else printf(RESET_COLOR "%s" RESET_COLOR "%s\n", timestamp, (str_line + str_pos));
+		if (module_identifier != NULL) printf("%s%s%s\n", timestamp, module_identifier, (str_line + str_pos));
+		else printf("%s%s\n", timestamp, (str_line + str_pos));
 	} else {
 		if (module_identifier != NULL) printf(TIMESTAMP_COLOR "%s" RESET_COLOR "%s%s" RESET_COLOR "%s\n", timestamp, log_level_colors[severity], module_identifier, (str_line + str_pos));
 		else printf(TIMESTAMP_COLOR "%s" RESET_COLOR "%s\n", timestamp, (str_line + str_pos));
