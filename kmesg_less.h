@@ -124,6 +124,7 @@ int find_substr_in_lines(unsigned int** list, unsigned int* size, const char* su
 	return TRUE;
 }
 
+// TODO: At some point would be probably cool to also have a bit of regex support
 void less_search(long long int* start_line, char** lines, long long int lines_cnt) {
 	char c = 0;
 	unsigned int buf_index = 0;
