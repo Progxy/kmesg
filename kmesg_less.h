@@ -101,6 +101,14 @@ void echo_char(char c) {
 	return;
 }
 
+void clear_n_chars(unsigned int n) {
+	for (unsigned int i = 0; i < n; ++i) {
+		printf("\b \b");
+		fflush(stdout);
+	}
+	return;
+}
+
 int find_substr_in_lines(unsigned int** list, unsigned int* size, const char* sub_str, char** lines, long long int lines_cnt) {
 	unsigned int sub_str_size = str_len(sub_str);
 	for (long long int i = 0; i < lines_cnt; ++i) {
@@ -121,7 +129,7 @@ int find_substr_in_lines(unsigned int** list, unsigned int* size, const char* su
 		}
 	}
 	
-	return TRUE;
+	return (*size > 0);
 }
 
 // TODO: At some point would be probably cool to also have a bit of regex support
@@ -151,8 +159,13 @@ void less_search(long long int* start_line, char** lines, long long int lines_cn
 	unsigned int search_ind = 0;
 
 	// Perform the search
-	if (!find_substr_in_lines(&search_list, &search_list_size, buf, lines, lines_cnt)) return;
-
+	if (!find_substr_in_lines(&search_list, &search_list_size, buf, lines, lines_cnt)) { 
+		clear_n_chars(1 + buf_index);
+		printf("Pattern '%s' not found.", buf);
+		fflush(stdout);
+		return;
+	}
+	
 	*start_line = search_list[search_ind];
 	if (!print_screen(*start_line, lines, lines_cnt)) {
 		free(search_list);
