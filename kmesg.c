@@ -18,6 +18,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <sys/fcntl.h>
+#include <sys/ioctl.h>
 #include <sys/klog.h>
 #include <errno.h>
 #include <string.h> // TODO: This could be substituted with str_error.h
@@ -298,6 +300,7 @@ void print_list_levels(void) {
 void print_helper(void) {
 	printf("Usage: kmesg [--flag[=val]].\n");
 	printf("Those are the flags available:\n");
+	printf("\t--A:  Enable active mode.\n");
 	printf("\t--C:  Clear the kernel ring buffer\n");
 	printf("\t--R:  Await until the kernel log buffer is nonempty, and then read at most 'len' bytes, where 'len' is the value passed after the flag, otherwise the default value '%u'.\n", DEFAULT_MSG_BUF_SIZE);
 	printf("\t--u:  Return the number of bytes currently available to be read from the kernel log buffer.\n");
@@ -398,6 +401,9 @@ void read_flag(char* flag_arg) {
 	} else if (str_n_cmp(flag_arg, "--cl", 4) == 0) {
 		kmesglobal.flag_modes |= LESS_MODE;
 		return;
+	} else if (str_n_cmp(flag_arg, "--A", 3) == 0) {
+		kmesglobal.flag_modes |= ACTIVE_MODE;
+		return;
 	}
 
 	if (!kmesglobal.mod_func) check_mod_func_flag(flag_arg);
@@ -408,6 +414,140 @@ void read_flag(char* flag_arg) {
 	}
 
 	return;
+}
+
+char* parse_kmsg_metadata(char* msg_buff, int* severity, long double* timestamp) {
+	int ret = 0;
+	char* msg_buff_ptr = msg_buff;
+
+	char log_level_str[25] = {0};
+	if ((ret = mem_copy_until(log_level_str, msg_buff_ptr, ',')) < 0) {
+		printf("Invalid string does not contain log level: '%s'", msg_buff);
+		return NULL;
+	}
+		
+	msg_buff_ptr += ret + 1;
+	
+	unsigned int log_level = str_to_int(log_level_str);
+	int facility = log_level / 8;
+	*severity = log_level % 8;
+
+	if (*severity > kmesglobal.min_severity || facility > kmesglobal.min_facility) {
+		return NULL;
+	}
+
+	while (*msg_buff_ptr != ',' && *msg_buff_ptr != '\0') msg_buff_ptr++;
+	if (*msg_buff_ptr == '\0') {
+		printf("Invalid string does not contain log level: '%s'", msg_buff);
+		return NULL;
+	}
+
+	msg_buff_ptr++;
+
+	char msg_time_str[25] = {0};
+	if ((ret = mem_copy_until(msg_time_str, msg_buff_ptr, ',')) < 0) {
+		printf("Invalid string does not contain log level: '%s'", msg_buff);
+		return NULL;
+	}
+	
+	*timestamp = str_to_int(msg_time_str) / 1000000.0L;
+	msg_buff_ptr += ret;
+
+	while (*msg_buff_ptr != ';' && *msg_buff_ptr != '\0') msg_buff_ptr++;
+	msg_buff_ptr++;
+
+	return msg_buff_ptr;
+}
+
+void print_escaped_ansi(char* msg) {
+	char buff[5] = {0};
+	unsigned char escaped_ansi = 0;
+	
+	while (*msg++ != '\0') {
+		char msg_chr = *(msg - 1);
+
+		if (escaped_ansi == 0 && msg_chr == '\\') {
+			buff[escaped_ansi++] = '\\';
+			continue;
+		} else if (escaped_ansi == 1 && msg_chr == 'x') {
+			buff[escaped_ansi++] = 'x';
+			continue;
+		} else if (escaped_ansi == 2 && msg_chr == '1') {
+			buff[escaped_ansi++] = '1';
+			continue;
+		} else if (escaped_ansi == 3 && msg_chr == 'b') {
+			escaped_ansi = 0;
+			printf("\x1b");
+			mem_set(buff, 0, 5);
+			continue;
+		} else if (escaped_ansi) {
+			printf("%s", buff);
+			mem_set(buff, 0, 5);
+		}
+
+		if (msg_chr == '\n' && *msg != '\0') printf("\n\t\t"), escaped_ansi = 0;
+		else printf("%c", msg_chr), escaped_ansi = 0;
+	}
+
+	return;
+}
+
+void pretty_print_kmsg(char* msg_buff) {
+	char* msg_buff_ptr = msg_buff;
+	long double timestamp = 0.0L;
+	int severity = 0;
+
+	if ((msg_buff_ptr = parse_kmsg_metadata(msg_buff, &severity, &timestamp)) == NULL) return;
+
+	char* msg = NULL;
+	char* module_identifier = NULL;
+	char msg_identifier[ACTIVE_MSG_BUF_SIZE] = {0};
+	int ret = 0;
+	if ((ret = mem_copy_until(msg_identifier, msg_buff_ptr, ':')) < 0) {
+		msg = msg_identifier;
+	} else {
+		module_identifier = msg_identifier;
+		msg_buff_ptr += ret + 1;
+		msg = msg_buff_ptr;
+	}
+
+	if (kmesglobal.flag_modes & DISABLE_COLORS) {
+		if (module_identifier != NULL) printf("[ %06Lf] %s:", timestamp, module_identifier);
+		else printf("[ %06Lf] ", timestamp);
+	} else {
+		if (module_identifier != NULL) printf(TIMESTAMP_COLOR "[ %06Lf] " RESET_COLOR "%s%s:" RESET_COLOR, timestamp, log_level_colors[severity], module_identifier);
+		else printf(TIMESTAMP_COLOR "[ %06Lf] " RESET_COLOR, timestamp);
+	}
+	
+	print_escaped_ansi(msg);
+
+	return;
+}
+
+int active_read(void) {
+	int kmesg_fd = 0;
+	if ((kmesg_fd = open("/dev/kmsg", O_RDONLY)) < 0) {
+		kmesg_perror("failed to execute the function: " CRITICAL_COLOR "%s" RESET_COLOR ", because: ", mod_func_names[kmesglobal.mod_func]);
+		return -1;
+	}
+
+	char msg_buff[ACTIVE_MSG_BUF_SIZE] = {0};
+	int ret = 0;
+	
+	do {
+		ret = 0;
+		if ((ret = read(kmesg_fd, msg_buff, ACTIVE_MSG_BUF_SIZE)) < 0) {
+			kmesg_perror("failed to execute the function: " CRITICAL_COLOR "%s" RESET_COLOR ", because: ", mod_func_names[kmesglobal.mod_func]);
+			return -1;
+		}
+
+		pretty_print_kmsg(msg_buff);
+		mem_set(msg_buff, 0, ACTIVE_MSG_BUF_SIZE);
+	} while (TRUE);
+	
+	close(kmesg_fd);
+	
+	return 0;
 }
 
 int exec_mod_func(void) {
@@ -426,23 +566,28 @@ int exec_mod_func(void) {
 		} else if (!kmesglobal.kern_msg_buf_size) kmesglobal.kern_msg_buf_size = DEFAULT_MSG_BUF_SIZE;
 		
 		if (kmesglobal.flag_modes & LESS_MODE) printf("\033[?1049h"); // Switch to the alternate screen buffer
-		printf(KMESG_COLOR "KMESG:" RESET_COLOR " the buffer size is set to \'%d\' bytes.\n", kmesglobal.kern_msg_buf_size);	
+		
+		if (kmesglobal.flag_modes & ACTIVE_MODE) active_read();
+		else {
+			printf(KMESG_COLOR "KMESG:" RESET_COLOR " the buffer size is set to \'%d\' bytes.\n", kmesglobal.kern_msg_buf_size);	
 
-		char* msg_buff = (char*) calloc(kmesglobal.kern_msg_buf_size, sizeof(char));
-		if (msg_buff == NULL) {
-			KMESG_ERR("failed to allocate the msg buffer.\n");
-			return -1;
-		}
+			char* msg_buff = (char*) calloc(kmesglobal.kern_msg_buf_size, sizeof(char));
+			if (msg_buff == NULL) {
+				KMESG_ERR("failed to allocate the msg buffer.\n");
+				return -1;
+			}
 
-		int ret = 0;
-		if ((ret = klogctl(kmesglobal.mod_func, msg_buff, kmesglobal.kern_msg_buf_size)) < 0) {
+			int ret = 0;
+			if ((ret = klogctl(kmesglobal.mod_func, msg_buff, kmesglobal.kern_msg_buf_size)) < 0) {
+				SAFE_FREE(msg_buff);
+				kmesg_perror("failed to execute the function: " CRITICAL_COLOR "%s" RESET_COLOR ", because: ", mod_func_names[kmesglobal.mod_func]);
+				return -1;
+			}
+
+			print_kmsg(msg_buff, ret);
 			SAFE_FREE(msg_buff);
-			kmesg_perror("failed to execute the function: " CRITICAL_COLOR "%s" RESET_COLOR ", because: ", mod_func_names[kmesglobal.mod_func]);
-			return -1;
 		}
 
-		print_kmsg(msg_buff, ret);
-		SAFE_FREE(msg_buff);
 		if (kmesglobal.flag_modes & LESS_MODE) printf("\033[?1049l"); // Restore the primary screen buffer
 
 	} else if (kmesglobal.mod_func == CLEAR || kmesglobal.mod_func == CONSOLE_ON || kmesglobal.mod_func == CONSOLE_OFF || kmesglobal.mod_func == SIZE_UNREAD || kmesglobal.mod_func == CONSOLE_LEVEL) {

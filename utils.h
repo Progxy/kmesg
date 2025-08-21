@@ -26,12 +26,14 @@ typedef unsigned char bool;
 #define DEFAULT_MSG_BUF_SIZE    8192
 #define MAX_DUMP_OFFSET_LEN     20
 #define MAX_DUMP_LINE_SIZE      512
+#define ACTIVE_MSG_BUF_SIZE     1024
 
 #define FALSE 0
 #define TRUE 1
 
 #define CHR_TO_INT(chr) ((int)(chr) - 48)
 #define IS_A_VAL(chr)   (((chr) >= 48) && ((chr) <= 57))
+#define TO_BOOL(var)    (!!(var))
 #define MAX(a, b)       ((a) > (b) ? (a) : (b)) 
 #define MIN(a, b)       ((a) < (b) ? (a) : (b)) 
 
@@ -76,44 +78,75 @@ const char* log_level_colors[] = {
 #define KMESG_ERR(fmt, ...)    printf(ERROR_COLOR "KMESG_ERROR" RESET_COLOR "(line: %u):" fmt, __LINE__, ##__VA_ARGS__)
 #define kmesg_perror(fmt, ...) KMESG_ERR(fmt WARNING_COLOR "%s.\n" RESET_COLOR, ##__VA_ARGS__, strerror(errno))
 
-#define KMESG_VERSION "1.2.0"
+#define KMESG_VERSION "1.3.0"
 
 // Kernel function types
-#define READ          2
-#define READ_ALL      3
-#define READ_CLEAR    4
-#define CLEAR         5
-#define CONSOLE_OFF   6
-#define CONSOLE_ON    7
-#define CONSOLE_LEVEL 8
-#define SIZE_UNREAD   9
-#define SIZE_BUFFER   10
+typedef enum KernelFunctionTypes {
+	READ          = 2,
+	READ_ALL      = 3,
+	READ_CLEAR    = 4,
+	CLEAR         = 5,
+	CONSOLE_OFF   = 6,
+	CONSOLE_ON    = 7,
+	CONSOLE_LEVEL = 8,
+	SIZE_UNREAD   = 9,
+	SIZE_BUFFER   = 10
+} KernelFunctionTypes;
 
 // KMESG function type
-#define COLOR_DEMO           11
-#define READ_UNREAD          12
-#define HELPER               13
-#define SET_MIN_SEVERITY     14
-#define SET_MIN_FACILITY     15
-#define LIST_LEVELS          16
-#define INVALID_FLAG         17
+typedef enum KMESGFunctionTypes {
+	COLOR_DEMO       = 11,
+	READ_UNREAD      = 12,
+	HELPER           = 13,
+	SET_MIN_SEVERITY = 14,
+	SET_MIN_FACILITY = 15,
+	LIST_LEVELS      = 16,
+	INVALID_FLAG     = 17
+} KMESGFunctionTypes;
 
 const char* mod_func_names[] = {"", "", "READ", "READ_ALL" , "READ_CLEAR", "CLEAR", "CONSOLE_OFF", "CONSOLE_ON", "CONSOLE_LEVEL", "SIZE_UNREAD", "SIZE_UNREAD", "SIZE_BUFFER"};
 
 // Kern log levels (severity levels)
-#define KERN_EMERG   0   
-#define KERN_ALERT   1  
-#define KERN_CRIT    2  
-#define KERN_ERR     3  
-#define KERN_WARNING 4  
-#define KERN_NOTICE  5  
-#define KERN_INFO    6
-#define KERN_DEBUG   7 
+typedef enum KernLogLevels {
+	KERN_EMERG   = 0,
+	KERN_ALERT   = 1,
+	KERN_CRIT    = 2,
+	KERN_ERR     = 3,
+	KERN_WARNING = 4,
+	KERN_NOTICE  = 5,
+	KERN_INFO    = 6,
+	KERN_DEBUG   = 7
+} KernLogLevels;
 
 const char* severities_names[] = {"KERN_EMERG", "KERN_ALERT", "KERN_CRIT", "KERN_ERR", "KERN_WARNING", "KERN_NOTICE", "KERN_INFO", "KERN_DEBUG"};
 
 // Facility levels
-typedef enum FacilityLevels{ FACILITY_KERNEL, FACILITY_USER, FACILITY_MAIL, FACILITY_DAEMON, FACILITY_AUTH, FACILITY_SYSLOG, FACILITY_LPR, FACILITY_NEWS, FACILITY_UUCP, FACILITY_CRON, FACILITY_AUTHPRIV, FACILITY_FTP, FACILITY_NTP, FACILITY_SECURITY, FACILITY_CONSOLE, FACILITY_SOLARIS_CRON, FACILITY_LOCAL0, FACILITY_LOCAL1, FACILITY_LOCAL2, FACILITY_LOCAL3, FACILITY_LOCAL4, FACILITY_LOCAL5, FACILITY_LOCAL6, FACILITY_LOCAL7} FacilityLevels;
+typedef enum FacilityLevels{ 
+	FACILITY_KERNEL,
+   	FACILITY_USER, 
+	FACILITY_MAIL, 
+	FACILITY_DAEMON, 
+	FACILITY_AUTH, 
+	FACILITY_SYSLOG, 
+	FACILITY_LPR, 
+	FACILITY_NEWS, 
+	FACILITY_UUCP, 
+	FACILITY_CRON, 
+	FACILITY_AUTHPRIV, 
+	FACILITY_FTP, 
+	FACILITY_NTP, 
+	FACILITY_SECURITY, 
+	FACILITY_CONSOLE, 
+	FACILITY_SOLARIS_CRON, 
+	FACILITY_LOCAL0, 
+	FACILITY_LOCAL1, 
+	FACILITY_LOCAL2, 
+	FACILITY_LOCAL3, 
+	FACILITY_LOCAL4, 
+	FACILITY_LOCAL5, 
+	FACILITY_LOCAL6, 
+	FACILITY_LOCAL7
+} FacilityLevels;
 
 const char* facilities_names[] = { "FACILITY_KERNEL", "FACILITY_USER", "FACILITY_MAIL", "FACILITY_DAEMON", "FACILITY_AUTH", "FACILITY_SYSLOG", "FACILITY_LPR", "FACILITY_NEWS", "FACILITY_UUCP", "FACILITY_CRON", "FACILITY_AUTHPRIV", "FACILITY_FTP", "FACILITY_NTP", "FACILITY_SECURITY", "FACILITY_CONSOLE", "FACILITY_SOLARIS-cron", "FACILITY_LOCAL0", "FACILITY_LOCAL1", "FACILITY_LOCAL2", "FACILITY_LOCAL3", "FACILITY_LOCAL4", "FACILITY_LOCAL5", "FACILITY_LOCAL6", "FACILITY_LOCAL7"};
 
@@ -121,7 +154,8 @@ typedef enum FlagModes {
 	LESS_MODE      = 0x01,
 	REVERSE_MODE   = 0x02,
 	DISABLE_COLORS = 0x04,
-	DUMP_KMESG     = 0x08
+	DUMP_KMESG     = 0x08,
+	ACTIVE_MODE    = 0x10
 } FlagModes;
 
 typedef struct KMESGlobal {
@@ -226,6 +260,13 @@ void reverse_str_arr(char*** str_arr, unsigned int size) {
 		(*str_arr)[size - 1 - i] = temp;
 	}
 	return;
+}
+
+int mem_copy_until(char* dest, char* src, const char chr) {
+	const char* orig_src = src;
+	while (*src != chr && *src != '\0') *dest++ = *src++;
+	if (*src == '\0') return -1;
+	return src - orig_src;
 }
 
 #endif //_KMESG_UTILS_H_
