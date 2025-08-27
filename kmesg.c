@@ -508,7 +508,7 @@ void pretty_print_kmsg(char* msg_buff) {
 
 	char* msg = NULL;
 	char* module_identifier = NULL;
-	char msg_identifier[ACTIVE_MSG_BUF_SIZE] = {0};
+	char msg_identifier[DEFAULT_MSG_BUF_SIZE] = {0};
 	int ret = 0;
 	if ((ret = mem_copy_until(msg_identifier, msg_buff_ptr, ':')) < 0) {
 		msg = msg_identifier;
@@ -538,18 +538,18 @@ int active_read(void) {
 		return -1;
 	}
 
-	char msg_buff[ACTIVE_MSG_BUF_SIZE] = {0};
+	char msg_buff[DEFAULT_MSG_BUF_SIZE] = {0};
 	int ret = 0;
 	
 	do {
 		ret = 0;
-		if ((ret = read(kmesg_fd, msg_buff, ACTIVE_MSG_BUF_SIZE)) < 0) {
+		if ((ret = read(kmesg_fd, msg_buff, DEFAULT_MSG_BUF_SIZE)) < 0) {
 			kmesg_perror("failed to execute the function: " CRITICAL_COLOR "%s" RESET_COLOR ", because: ", mod_func_names[kmesglobal.mod_func]);
 			return -1;
 		}
 
 		pretty_print_kmsg(msg_buff);
-		mem_set(msg_buff, 0, ACTIVE_MSG_BUF_SIZE);
+		mem_set(msg_buff, 0, DEFAULT_MSG_BUF_SIZE);
 	} while (TRUE);
 	
 	close(kmesg_fd);

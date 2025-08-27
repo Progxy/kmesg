@@ -26,7 +26,6 @@ typedef unsigned char bool;
 #define DEFAULT_MSG_BUF_SIZE    8192
 #define MAX_DUMP_OFFSET_LEN     20
 #define MAX_DUMP_LINE_SIZE      512
-#define ACTIVE_MSG_BUF_SIZE     1024
 
 #define FALSE 0
 #define TRUE 1
