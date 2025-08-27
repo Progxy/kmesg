@@ -438,7 +438,7 @@ char* parse_kmsg_metadata(char* msg_buff, int* severity, long double* timestamp)
 
 	while (*msg_buff_ptr != ',' && *msg_buff_ptr != '\0') msg_buff_ptr++;
 	if (*msg_buff_ptr == '\0') {
-		printf("Invalid string does not contain log level: '%s'", msg_buff);
+		printf("Invalid string does not contain sequence number: '%s'", msg_buff);
 		return NULL;
 	}
 
@@ -446,15 +446,22 @@ char* parse_kmsg_metadata(char* msg_buff, int* severity, long double* timestamp)
 
 	char msg_time_str[25] = {0};
 	if ((ret = mem_copy_until(msg_time_str, msg_buff_ptr, ',')) < 0) {
-		printf("Invalid string does not contain log level: '%s'", msg_buff);
+		printf("Invalid string does not contain timestamp: '%s'", msg_buff);
 		return NULL;
 	}
 	
 	*timestamp = str_to_int(msg_time_str) / 1000000.0L;
-	msg_buff_ptr += ret;
+	msg_buff_ptr += ret + 1;
 
-	while (*msg_buff_ptr != ';' && *msg_buff_ptr != '\0') msg_buff_ptr++;
-	msg_buff_ptr++;
+	char msg_flag_str[64] = {0};
+	if ((ret = mem_copy_until(msg_flag_str, msg_buff_ptr, ';')) < 0) {
+		printf("Invalid string does not contain flags: '%s'", msg_buff);
+		return NULL;
+	}
+	
+	// TODO: Introduce better flags parsing
+	if (str_cmp(msg_flag_str, "-") != 0) printf("Flag: '%s': ", msg_flag_str);
+	msg_buff_ptr += ret + 1;
 
 	return msg_buff_ptr;
 }
