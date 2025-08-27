@@ -487,6 +487,14 @@ void print_escaped_ansi(char* msg) {
 			printf("\x1b");
 			mem_set(buff, 0, 5);
 			continue;
+		} else if (escaped_ansi == 2 && msg_chr == '0') {
+			buff[escaped_ansi++] = '0';
+			continue;
+		} else if (escaped_ansi == 3 && msg_chr == '9') {
+			escaped_ansi = 0;
+			printf("\t");
+			mem_set(buff, 0, 5);
+			continue;
 		} else if (escaped_ansi) {
 			printf("%s", buff);
 			mem_set(buff, 0, 5);
